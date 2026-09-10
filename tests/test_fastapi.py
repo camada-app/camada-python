@@ -3,37 +3,20 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 
 import pytest
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.testclient import TestClient
 
-import camada
 from camada.engine import Camada
-from camada.fastapi import CamadaMiddleware, script_tag, track
+from camada.fastapi import CamadaMiddleware, script_tag, serve_challenge, track
 
 from .fake_analyst import BLOCKED_IP, FakeAnalyst
-from .hosts import engine_with, loaded
 
 
 @pytest.fixture
-def analyst() -> FakeAnalyst:
-    return FakeAnalyst()
-
-
-@pytest.fixture
-def engine(analyst: FakeAnalyst, monkeypatch: pytest.MonkeyPatch) -> Iterator[Camada]:
-    e = engine_with(analyst, {"CAMADA_TRUSTED_PROXY": "hops:1"})
-    monkeypatch.setattr(camada, "_default", e)
-    loaded(e)
-    yield e
-    e.stop()
-
-
-@pytest.fixture
-def client(engine: Camada) -> TestClient:
+def client(default_engine: Camada) -> TestClient:
     app = FastAPI()
     app.add_middleware(CamadaMiddleware)
 
@@ -46,10 +29,15 @@ def client(engine: Camada) -> TestClient:
         track(request, "signup")
         return {"id": item_id}
 
+    @app.get("/export")
+    async def export(request: Request) -> PlainTextResponse:
+        return serve_challenge(request) or PlainTextResponse("file")
+
     return TestClient(app)
 
 
-def test_blocks_captures_routes_and_tracks(client: TestClient, engine: Camada, analyst: FakeAnalyst) -> None:
+def test_blocks_captures_routes_and_tracks(client: TestClient, default_engine: Camada, analyst: FakeAnalyst) -> None:
+    engine = default_engine
     assert client.get("/", headers={"x-forwarded-for": BLOCKED_IP}).status_code == 403
     r = client.get("/", headers={"x-forwarded-for": "172.16.0.9"})
     assert r.status_code == 200 and f'?r={r.headers["x-rid"]}' in r.text and r.headers["set-cookie"].startswith("_sfp=")
@@ -62,7 +50,18 @@ def test_blocks_captures_routes_and_tracks(client: TestClient, engine: Camada, a
     assert json.dumps(evs).count("sdk-python") == 4
 
 
-def test_beacon_and_challenge_paths_are_camadas(client: TestClient, engine: Camada, analyst: FakeAnalyst) -> None:
+def test_beacon_and_challenge_paths_are_camadas(client: TestClient) -> None:
     assert client.get("/_cam/b.js").headers["content-type"] == "application/javascript"
     assert client.post("/_cam/fp", content=b"{}", headers={"x-forwarded-for": "198.18.0.5"}).status_code == 204
     assert client.post("/__camada/challenge", content=b"nonce=x", headers={"x-forwarded-for": "198.18.0.5"}).status_code == 403
+
+
+def test_a_route_gates_itself_with_serve_challenge(client: TestClient, default_engine: Camada, analyst: FakeAnalyst) -> None:
+    html = {"x-forwarded-for": "172.16.0.9", "accept": "text/html", "sec-fetch-dest": "document"}
+    r = client.get("/export", headers=html)
+    assert r.status_code == 403 and r.headers["x-camada-challenge"] == "1" and "text/html" in r.headers["content-type"]
+    assert default_engine.kit is not None
+    cch = default_engine.kit.issue("172.16.0.9", default_engine.now_ms())
+    assert client.get("/export", headers={**html, "cookie": f"_cch={cch}"}).text == "file"
+    default_engine.queue.flush()  # type: ignore[union-attr]
+    assert [(e["st"], e.get("blk")) for e in analyst.all_events] == [(403, "challenge"), (200, None)]   # one request, one event

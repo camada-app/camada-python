@@ -3,26 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
 from typing import Any
-
-import pytest
 
 from camada.asgi import CamadaASGI
 from camada.engine import Camada
 
 from .fake_analyst import FakeAnalyst
-from .hosts import AsgiDriver, Call, engine_with, loaded
-
-
-@pytest.fixture
-def engine() -> Iterator[Camada]:
-    a = FakeAnalyst()
-    e = engine_with(a)
-    e.analyst = a  # type: ignore[attr-defined]
-    loaded(e)
-    yield e
-    e.stop()
+from .hosts import AsgiDriver, Call
 
 
 def run(app: Any, scope: dict[str, Any], body: bytes = b"") -> list[dict[str, Any]]:
@@ -39,15 +26,15 @@ def run(app: Any, scope: dict[str, Any], body: bytes = b"") -> list[dict[str, An
     return sent
 
 
-def test_wire_header_order_reaches_the_event(engine: Camada) -> None:
+def test_wire_header_order_reaches_the_event(engine: Camada, analyst: FakeAnalyst) -> None:
     d = AsgiDriver(engine)
     d(Call("GET", "/", headers=[("x-b", "1"), ("accept", "*/*"), ("x-a", "2")]))
     engine.queue.flush()  # type: ignore[union-attr]
-    (ev,) = engine.analyst.all_events  # type: ignore[attr-defined]
-    assert ev["hord"] == "x-b,accept,x-a,content-length,host" or ev["hord"].startswith("x-b,accept,x-a")
+    (ev,) = analyst.all_events
+    assert ev["hord"].startswith("x-b,accept,x-a")
 
 
-def test_streaming_bodies_pass_untouched_and_finish_once(engine: Camada) -> None:
+def test_streaming_bodies_pass_untouched_and_finish_once(engine: Camada, analyst: FakeAnalyst) -> None:
     async def app(scope: dict[str, Any], receive: Any, send: Any) -> None:
         await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/plain")]})
         for part in (b"a", b"b", b"c"):
@@ -58,7 +45,7 @@ def test_streaming_bodies_pass_untouched_and_finish_once(engine: Camada) -> None
     assert [m.get("body") for m in sent if m["type"] == "http.response.body"] == [b"a", b"b", b"c", b""]
     assert any(k == b"x-rid" for k, _ in sent[0]["headers"])
     engine.queue.flush()  # type: ignore[union-attr]
-    evs = engine.analyst.all_events  # type: ignore[attr-defined]
+    evs = analyst.all_events
     assert len(evs) == 1 and evs[0]["p"] == "/s" and evs[0]["st"] == 200
 
 
@@ -73,8 +60,8 @@ def test_lifespan_and_websocket_scopes_pass_through(engine: Camada) -> None:
     assert seen == ["lifespan", "websocket"]
 
 
-def test_a_body_camada_read_is_replayed_to_the_app(engine: Camada) -> None:
-    engine.analyst.config["beacon"] = False  # type: ignore[attr-defined]
+def test_a_body_camada_read_is_replayed_to_the_app(engine: Camada, analyst: FakeAnalyst) -> None:
+    analyst.config["beacon"] = False
     engine.snap.refresh()  # type: ignore[union-attr]
     got: list[bytes] = []
 
@@ -86,16 +73,11 @@ def test_a_body_camada_read_is_replayed_to_the_app(engine: Camada) -> None:
 
     # a beacon POST with the beacon off falls through: the app must still read the body
     scope = {"type": "http", "method": "POST", "path": "/_cam/fp", "headers": [(b"content-length", b"2")], "client": ("172.16.0.9", 1), "scheme": "http"}
-    engine2 = engine_with(engine.analyst)  # type: ignore[attr-defined]
-    loaded(engine2)
-    try:
-        sent = run(CamadaASGI(app, engine=engine2), scope, b"{}")
-    finally:
-        engine2.stop()
+    sent = run(CamadaASGI(app, engine=engine), scope, b"{}")
     assert sent[-1]["body"] == b"ok" and got == [b"{}"]
 
 
-def test_route_pattern_reaches_the_event_when_the_host_sets_it(engine: Camada) -> None:
+def test_route_pattern_reaches_the_event_when_the_host_sets_it(engine: Camada, analyst: FakeAnalyst) -> None:
     class R:
         path = "/items/{id}"
 
@@ -106,4 +88,13 @@ def test_route_pattern_reaches_the_event_when_the_host_sets_it(engine: Camada) -
 
     run(CamadaASGI(app, engine=engine), {"type": "http", "method": "GET", "path": "/items/7", "headers": [], "client": ("172.16.0.9", 1), "scheme": "http"})
     engine.queue.flush()  # type: ignore[union-attr]
-    assert engine.analyst.all_events[0]["rt"] == "/items/{id}"  # type: ignore[attr-defined]
+    assert analyst.all_events[0]["rt"] == "/items/{id}"
+
+
+def test_cookies_split_over_several_fields_still_join_the_session(engine: Camada, analyst: FakeAnalyst) -> None:
+    # HTTP/2 clients send one cookie per field; node:http joins them with '; ' and so does Req.header
+    d = AsgiDriver(engine)
+    d(Call("GET", "/", headers=[("cookie", "a=1"), ("cookie", "_sfp=abc")]))
+    d(Call("GET", "/", headers=[("cookie", "a=1"), ("cookie", "_sfp=abc")]))
+    engine.queue.flush()  # type: ignore[union-attr]
+    assert [(e["sid"], e["ns"]) for e in analyst.all_events] == [("abc", 0), ("abc", 0)]

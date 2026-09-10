@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import struct
 import threading
@@ -56,10 +57,13 @@ class SnapshotClient:
             os.register_at_fork(after_in_child=self._after_fork)
 
     def _after_fork(self) -> None:
-        """Threads do not survive fork (gunicorn --preload): forget them so the child re-spawns its own."""
+        """Threads do not survive fork (gunicorn --preload): forget the parent's, then re-arm the
+        timer so the child polls on its own (lazy mode refreshes from the request path anyway)."""
         self._thread = None
         self._loading = threading.Lock()
         self._stop = threading.Event()
+        if self.mode == "timer":
+            self.start()
 
     def start(self) -> None:
         self.ensure_fresh()
@@ -92,14 +96,15 @@ class SnapshotClient:
 
     def refresh(self) -> None:
         """One synchronous poll (single in-flight): what the threads call, and what tests and warm-ups call directly."""
-        if not self._loading.acquire(blocking=False):
+        lock = self._loading   # bound once: _after_fork swaps the attribute
+        if not lock.acquire(blocking=False):
             return
         try:
             self._load()
-        except Exception as err:   # noqa: BLE001 — a poll that can never succeed must not be silent, nor fatal
+        except Exception as err:   # a poll that can never succeed must not be silent, nor fatal
             log_rate_limited(err)
         finally:
-            self._loading.release()
+            lock.release()
 
     def _load(self) -> None:
         headers = {"authorization": f"Bearer {self.token}", "accept-encoding": "gzip"}
@@ -150,7 +155,7 @@ class SnapshotClient:
             secs = float(cfg.get("poll_seconds", 0))
         except (TypeError, ValueError):
             return
-        if self._pinned or secs != secs or secs < 5 or secs == self.refresh_s:
+        if self._pinned or not math.isfinite(secs) or secs < 5 or secs == self.refresh_s:   # json.loads admits NaN and 1e999
             return
         self.refresh_s = secs
 

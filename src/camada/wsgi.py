@@ -6,7 +6,7 @@ import io
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
-from .engine import Answer, Camada, Passed, Req, cookie_value  # noqa: F401 — cookie_value re-exported for integrations
+from .engine import Answer, Camada, Passed, Req
 from .guarded import log_rate_limited
 
 StartResponse = Callable[..., Any]
@@ -36,7 +36,7 @@ def req_from_environ(environ: dict[str, Any]) -> Req:
 
 def read_body(environ: dict[str, Any], limit: int) -> bytes | None:
     """At most `limit` bytes, or None when the declared or actual size exceeds it. Whatever was
-    read is put back so an app the request falls through to still sees its body."""
+    read is put back so an app the request falls through to still sees its whole body."""
     try:
         declared = int(environ.get("CONTENT_LENGTH") or 0)
     except ValueError:
@@ -45,12 +45,36 @@ def read_body(environ: dict[str, Any], limit: int) -> bytes | None:
         return None
     stream = environ.get("wsgi.input")
     data = stream.read(limit + 1) if stream is not None else b""
+    if len(data) > limit:
+        environ["wsgi.input"] = io.BufferedReader(_Chained(data, stream))   # over the cap: the prefix, then the unread rest
+        return None
     environ["wsgi.input"] = io.BytesIO(data)
-    return None if len(data) > limit else data
+    return data
+
+
+class _Chained(io.RawIOBase):
+    """The bytes camada already read, then whatever is left in the stream the app was owed."""
+
+    def __init__(self, head: bytes, rest: Any) -> None:
+        self._head, self._rest = memoryview(head), rest
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, b: Any) -> int:
+        if len(self._head):
+            n = min(len(b), len(self._head))
+            b[:n], self._head = self._head[:n], self._head[n:]
+            return n
+        data = self._rest.read(len(b))
+        b[: len(data)] = data
+        return len(data)
 
 
 class _Closing:
-    """Wraps the app's iterable so on_finish fires exactly once, after the last byte or on close()."""
+    """Wraps the app's iterable so on_finish fires exactly once, after the last byte or on close().
+    The inner close() runs once too: the server calls close() after iterating (PEP 3333), and an
+    app's cleanup (Django's request_finished, werkzeug's call_on_close) must not run twice."""
 
     def __init__(self, inner: Iterable[bytes], done: Callable[[], None]) -> None:
         self._inner, self._done, self._fired = inner, done, False
@@ -62,14 +86,15 @@ class _Closing:
             self.close()
 
     def close(self) -> None:
+        if self._fired:
+            return
+        self._fired = True
         try:
             close = getattr(self._inner, "close", None)
             if close:
                 close()
         finally:
-            if not self._fired:
-                self._fired = True
-                self._done()
+            self._done()
 
 
 class CamadaWSGI:
@@ -95,7 +120,7 @@ class CamadaWSGI:
             req = req_from_environ(environ)
             limit = eng.wants_body(req.method, req.path)
             body = read_body(environ, limit) if limit is not None else None
-        except Exception as err:   # noqa: BLE001
+        except Exception as err:
             log_rate_limited(err)
             return self.app(environ, start_response)
         result = eng.handle(req, body)
@@ -116,7 +141,7 @@ class CamadaWSGI:
                     headers = [*headers, ("x-rid", p.rid)]
                 if p.set_cookie:
                     headers = [*headers, ("set-cookie", p.set_cookie)]
-            except Exception as err:   # noqa: BLE001
+            except Exception as err:
                 log_rate_limited(err)
             return start_response(status, headers, exc_info) if exc_info is not None else start_response(status, headers)
 

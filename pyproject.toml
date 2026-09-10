@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "camada"
 dynamic = ["version"]
-description = "camada SDK for Python: inline enforcement of your snapshot (ordered custom rules, block, allow, challenge), first-party beacon and proof-of-work challenge, batched event shipping. ASGI and WSGI middleware; Django, Flask and FastAPI integrations."
+description = "camada SDK for Python: inline enforcement of your snapshot (ordered custom rules, then allow, block, challenge), first-party beacon and proof-of-work challenge, batched event shipping. ASGI and WSGI middleware; Django, Flask and FastAPI integrations."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"

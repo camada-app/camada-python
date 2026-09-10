@@ -182,3 +182,29 @@ def test_urllib_transport_gunzips_and_never_raises() -> None:
         srv.server_close()
     dead = urllib_transport(HttpRequest("GET", "http://127.0.0.1:1/snapshot", {}, None, 0.2))
     assert dead.status == 0
+
+
+def test_after_fork_rearms_the_timer() -> None:
+    a = FakeAnalyst()
+    c = SnapshotClient(URL, "snap-test", transport=a.transport, mode="timer", refresh_s=0.02)
+    c.start()
+    c.stop()
+    n = len(a.snapshot_requests)
+    c._after_fork()   # the child's copy: no thread, then a fresh one polling on its own
+    try:
+        for _ in range(200):
+            if len(a.snapshot_requests) >= n + 2:
+                break
+            time.sleep(0.005)
+        assert len(a.snapshot_requests) >= n + 2
+    finally:
+        c.stop()
+
+
+def test_non_finite_poll_seconds_is_ignored() -> None:
+    a = FakeAnalyst()
+    a.config["poll_seconds"] = 1e999   # json.loads reads it as inf; Event.wait(inf) would kill the timer thread
+    c = client(a)
+    before = c.refresh_s
+    c.refresh()
+    assert c.refresh_s == before

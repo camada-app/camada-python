@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -31,3 +32,38 @@ def read_json(rel: str) -> Any:
 @pytest.fixture(scope="session")
 def fixtures() -> Path:
     return fixture_path(".")
+
+
+# fake_analyst and hosts import the readers above, so their imports stay inside the fixtures.
+
+
+@pytest.fixture
+def analyst() -> Any:
+    from .fake_analyst import FakeAnalyst
+
+    return FakeAnalyst()
+
+
+@pytest.fixture
+def engine(analyst: Any) -> Iterator[Any]:
+    """One loaded engine over `analyst`, stopped after the test."""
+    from .hosts import engine_with, loaded
+
+    e = engine_with(analyst)
+    loaded(e)
+    yield e
+    e.stop()
+
+
+@pytest.fixture
+def default_engine(analyst: Any, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+    """The engine the integrations resolve through get_default(), trusting one proxy hop (test clients set x-forwarded-for)."""
+    import camada
+
+    from .hosts import engine_with, loaded
+
+    e = engine_with(analyst, {"CAMADA_TRUSTED_PROXY": "hops:1"})
+    monkeypatch.setattr(camada, "_default", e)
+    loaded(e)
+    yield e
+    e.stop()

@@ -53,9 +53,12 @@ class Req:
     route: str | None = None        # the matched route pattern, when the host knows it at finish time
 
     def header(self, name: str) -> str | None:
-        """First value; a header the client repeated is joined the way the wire carried it."""
+        """A header the client repeated is joined the way node:http does it: cookies with '; ' (HTTP/2
+        clients split them into several fields; cookie_value() looks for '; name='), the rest with ', '."""
         vals = [v for k, v in self.headers if k == name]
-        return ", ".join(vals) if vals else None
+        if not vals:
+            return None
+        return ("; " if name == "cookie" else ", ").join(vals)
 
 
 @dataclass(slots=True)
@@ -144,7 +147,7 @@ class Camada:
         return (self.snap.config or {}).get("trusted_proxy") if self.snap else None
 
     def _beacon_enabled(self) -> bool:
-        return bool(self.snap) and (self.snap.config or {}).get("beacon") is not False   # type: ignore[union-attr]
+        return self.snap is not None and (self.snap.config or {}).get("beacon") is not False
 
     def _ip(self, req: Req) -> str | None:
         return resolve_client_ip(req.peer, req.header("x-forwarded-for"), self._trusted_proxy())
@@ -166,27 +169,14 @@ class Camada:
         the adapter refused to read it (declared or actual size over the cap)."""
         try:
             return self._decide(req, body)
-        except Exception as err:   # noqa: BLE001 — a camada bug costs the join, never the request
+        except Exception as err:   # a camada bug costs the join, never the request (node's handle() returns false too)
             log_rate_limited(err)
-            return self._fallback(req)
-
-    def _fallback(self, req: Req) -> Passed:
-        rid = str(uuid.uuid4())
-        t0 = time.monotonic()
-
-        def on_finish(status: int) -> None:
-            try:
-                ev = self._event(req, rid, None, False, self._ip(req))
-                ev["st"], ev["dur"] = status, int((time.monotonic() - t0) * 1000)
-                self.queue.push(ev)   # type: ignore[union-attr]
-            except Exception as err:   # noqa: BLE001
-                log_rate_limited(err)
-
-        return Passed(rid, None, {"rid": rid, "sid": None, "ip": None, "_req": req, "_engine": self}, on_finish)
+            return INERT
 
     def _decide(self, req: Req, body: bytes | None) -> Answer | Passed:
         if self.disabled or self.snap is None or self.queue is None or self.env is None:
             return INERT
+        queue = self.queue
         t0 = time.monotonic()
         self.snap.ensure_fresh()
         ip = self._ip(req)
@@ -203,7 +193,7 @@ class Camada:
             ev["blk"] = v.reason   # the reason rides the event so the analyst counts SDK blocks, not the app's own 403s
             if v.rule:
                 ev["rl"] = v.rule
-            self.queue.push(ev)
+            queue.push(ev)
             return Answer(403, headers, b"Forbidden")
         # `warn` passes the request and only marks its event (below, on finish); a skip passes
         # with nothing stamped at all — it is the absence of enforcement.
@@ -216,7 +206,7 @@ class Camada:
             if req.method == "POST" and req.path == self.challenge_path:
                 return self._verify(req, body, ip)
             if v.challenge and not self._challenge_passed(req, ip):
-                return self._serve_challenge(req, ip, req.path + req.query, sid=cookie_value(req.header("cookie"), C.SESSION_COOKIE))
+                return self._serve_challenge(req, ip, sid=cookie_value(req.header("cookie"), C.SESSION_COOKIE))
 
         if self._beacon_enabled():
             if req.method == "GET" and req.path == self.script_path:
@@ -239,7 +229,8 @@ class Camada:
 
         cfg = self.snap.config or {}
         excluded = any(req.path.startswith(x) for x in cfg.get("exclude") or [])
-        sampled = random.random() < float(cfg.get("sample", 1) if cfg.get("sample") is not None else 1)   # noqa: S311 — sampling, not crypto
+        sample = cfg.get("sample")
+        sampled = random.random() < (1.0 if sample is None else float(sample))   # sampling, not crypto
         warn_rule = v.rule if v.warn else None
 
         def on_finish(status: int) -> None:
@@ -254,8 +245,8 @@ class Camada:
                     ev["rt"] = req.route
                 if warn_rule:
                     ev["wrn"] = warn_rule   # §D3: the warn rule that let this request through
-                self.queue.push(ev)   # type: ignore[union-attr]
-            except Exception as err:   # noqa: BLE001
+                queue.push(ev)
+            except Exception as err:
                 log_rate_limited(err)
 
         return Passed(rid, set_cookie, ctx, on_finish)
@@ -280,7 +271,8 @@ class Camada:
             return answer
         if not isinstance(parsed, dict):
             return answer
-        self.queue.push({**parsed, "sig": 1, "ip": ip, "tap": C.TAP})   # type: ignore[union-attr]   # spread first: ip and tap are the server's word
+        assert self.queue is not None
+        self.queue.push({**parsed, "sig": 1, "ip": ip, "tap": C.TAP})   # spread first: ip and tap are the server's word
         return answer
 
     def script_tag(self, ctx: Mapping[str, Any] | None) -> str:
@@ -295,48 +287,47 @@ class Camada:
     def _challenge_passed(self, req: Req, ip: str | None) -> bool:
         return bool(self.kit and self.kit.token_valid(ip, self.now_ms(), cookie_value(req.header("cookie"), CHALLENGE_COOKIE)))
 
-    def _page(self, req: Req, ip: str, to: str) -> Answer:
+    def _page(self, ip: str, to: str) -> Answer:
         assert self.kit is not None
         html = challenge_page(nonce=self.kit.nonce(ip, self.now_ms()), action=self.challenge_path, to=to)
         headers: Headers = [("content-type", "text/html; charset=utf-8"), ("cache-control", "no-store"), ("x-camada-challenge", "1")]
         return Answer(403, headers, html.encode())
 
-    def _serve_challenge(self, req: Req, ip: str, target: str, sid: str | None) -> Answer:
+    def _serve_challenge(self, req: Req, ip: str, sid: str | None) -> Answer:
         """403 + the proof-of-work page (HTML navigations) or 403 JSON (everything else), plus the
         `blk: "challenge"` event — a served challenge is reported like a block (contract §D2)."""
-        to = safe_return_to(target)
+        to = safe_return_to(req.path + req.query)
         if wants_html(req.header("accept"), req.header("sec-fetch-dest")):
-            answer = self._page(req, ip, to)
+            answer = self._page(ip, to)
         else:
             headers: Headers = [("content-type", "application/json"), ("cache-control", "no-store"), ("x-camada-challenge", "1")]
             answer = Answer(403, headers, b'{"error":"challenge_required"}')
         try:
-            path, _, query = target.partition("?")
-            at = Req(req.method, path, "?" + query if query else "", req.host, req.http_version, req.peer, req.https, req.headers)
-            ev = self._event(at, str(uuid.uuid4()), sid, False, ip)
+            assert self.queue is not None
+            ev = self._event(req, str(uuid.uuid4()), sid, False, ip)
             ev["st"], ev["blk"] = 403, "challenge"
-            self.queue.push(ev)   # type: ignore[union-attr]
-        except Exception as err:   # noqa: BLE001 — the response is decided; telemetry must never undo that
+            self.queue.push(ev)
+        except Exception as err:   # the response is decided; telemetry must never undo that
             log_rate_limited(err)
         return answer
 
     def _verify(self, req: Req, body: bytes | None, ip: str) -> Answer:
         """POST from the challenge page: validate the nonce and the proof of work, set _cch, 302
         back to the (sanitised, same-site) original URL, and ship `{ st: 200, ch: 1 }`."""
-        assert self.kit is not None
+        assert self.kit is not None and self.queue is not None
         if body is None:
             return Answer(413, [], b"")
         form = parse_form_body(body.decode("utf-8", "replace"))
         to = safe_return_to(form.get("to"))
         now = self.now_ms()
         if not self.kit.verify(ip, now, form.get("nonce"), form.get("solution")):
-            return self._page(req, ip, to)
+            return self._page(ip, to)
         secure = req.https or req.header("x-forwarded-proto") == "https"
         cookie = challenge_cookie(self.kit.issue(ip, now), secure)
         headers: Headers = [("location", to), ("set-cookie", cookie), ("cache-control", "no-store")]
         ev = self._event(req, str(uuid.uuid4()), cookie_value(req.header("cookie"), C.SESSION_COOKIE), False, ip)
         ev["st"], ev["ch"] = 200, 1   # challenge passed (contract §A3 ingest field)
-        self.queue.push(ev)   # type: ignore[union-attr]
+        self.queue.push(ev)
         return Answer(302, headers, b"")
 
     def serve_challenge(self, ctx: Mapping[str, Any] | None) -> Answer | None:
@@ -352,8 +343,8 @@ class Camada:
                 return None
             if isinstance(ctx, dict):
                 ctx["challenged"] = True
-            return self._serve_challenge(req, ip, req.path + req.query, sid=ctx.get("sid"))
-        except Exception as err:   # noqa: BLE001
+            return self._serve_challenge(req, ip, sid=ctx.get("sid"))
+        except Exception as err:
             log_rate_limited(err)
             return None
 
@@ -369,7 +360,7 @@ class Camada:
             c = ctx or {}
             row = {"tap": C.TAP, "et": event, "uid": uid, "rid": c.get("rid"), "sid": c.get("sid"), "ip": c.get("ip"), "ts": self.now_ms()}
             self.queue.push(row)
-        except Exception as err:   # noqa: BLE001
+        except Exception as err:
             log_rate_limited(err)
 
     def stop(self) -> None:

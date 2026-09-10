@@ -32,7 +32,13 @@ async def ahome(request: HttpRequest) -> HttpResponse:
     return HttpResponse("async")
 
 
-urlpatterns = [path("", home), path("a/", ahome), path("items/<int:id>/", home)]
+def export(request: HttpRequest) -> HttpResponse:
+    from camada.django import serve_challenge
+
+    return serve_challenge(request) or HttpResponse("file")
+
+
+urlpatterns = [path("", home), path("a/", ahome), path("items/<int:id>/", home), path("export/", export)]
 
 if not settings.configured:
     settings.configure(
@@ -98,3 +104,14 @@ def test_async_stack(engine: Camada) -> None:
     assert asyncio.run(go()) == (403, 200)
     evs = events(engine)
     assert [e["st"] for e in evs] == [403, 200]
+
+
+def test_a_view_gates_itself_with_serve_challenge(engine: Camada) -> None:
+    c = Client()
+    html = {"HTTP_X_FORWARDED_FOR": "172.16.0.9", "HTTP_ACCEPT": "text/html", "HTTP_SEC_FETCH_DEST": "document"}
+    r = c.get("/export/", **html)
+    assert r.status_code == 403 and r["x-camada-challenge"] == "1" and r["content-type"].startswith("text/html")
+    assert engine.kit is not None
+    cch = engine.kit.issue("172.16.0.9", engine.now_ms())
+    assert c.get("/export/", HTTP_COOKIE=f"_cch={cch}", **html).content == b"file"
+    assert [(e["st"], e.get("blk")) for e in events(engine)] == [(403, "challenge"), (200, None)]

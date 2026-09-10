@@ -1,6 +1,7 @@
 # Django integration: `MIDDLEWARE = ["camada.django.CamadaMiddleware", ...]` (put it first, so
-# camada answers before anything else runs), then `script_tag(request)` in templates and
-# `track(request, "login_failed", user=email)` in views. Works on sync and async stacks.
+# camada answers before anything else runs), then `script_tag(request)` in templates,
+# `track(request, "login_failed", user=email)` in views, and `serve_challenge(request)` for a
+# view that gates itself. Works on sync and async stacks.
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -10,24 +11,35 @@ from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
 
 from . import constants as C
-from . import get_default
-from .engine import Answer, Camada, Passed, engine_of
+from . import engine_for, get_default
+from .engine import INERT, Answer, Camada, Passed
 from .guarded import log_rate_limited
 from .wsgi import req_from_environ
 
 GetResponse = Callable[[HttpRequest], Any]
 
 
-def _engine(request: HttpRequest) -> Camada:
-    return engine_of(getattr(request, "camada", None)) or get_default()
+def _ctx(request: HttpRequest) -> dict[str, Any] | None:
+    ctx = getattr(request, "camada", None)
+    return ctx if isinstance(ctx, dict) else None
 
 
 def script_tag(request: HttpRequest) -> str:
-    return _engine(request).script_tag(getattr(request, "camada", None))
+    ctx = _ctx(request)
+    return engine_for(ctx).script_tag(ctx)
 
 
 def track(request: HttpRequest, event: str, user: str | None = None) -> None:
-    _engine(request).track(getattr(request, "camada", None), event, user)
+    ctx = _ctx(request)
+    engine_for(ctx).track(ctx, event, user)
+
+
+def serve_challenge(request: HttpRequest) -> HttpResponse | None:
+    """The proof-of-work page (or 403 JSON) to return from a view you gate yourself; None once
+    the browser holds a valid _cch, or when the client cannot be identified (fail open)."""
+    ctx = _ctx(request)
+    a = engine_for(ctx).serve_challenge(ctx)
+    return None if a is None else _answer(a)
 
 
 def _answer(a: Answer) -> HttpResponse:
@@ -87,9 +99,9 @@ class CamadaMiddleware:
             body: bytes | None = None
             if limit is not None:
                 body = self._body(request, limit)
-        except Exception as err:   # noqa: BLE001
+        except Exception as err:
             log_rate_limited(err)
-            return Passed(None, None, None, None)
+            return INERT
         result = eng.handle(req, body)
         if isinstance(result, Answer):
             return _answer(result)
@@ -107,7 +119,7 @@ class CamadaMiddleware:
             return None
         try:
             data = request.body
-        except Exception:   # noqa: BLE001 — stream already consumed, or too big for Django's own cap
+        except Exception:   # stream already consumed, or too big for Django's own cap
             return None
         return None if len(data) > limit else data
 
@@ -120,7 +132,7 @@ class CamadaMiddleware:
                     C.SESSION_COOKIE, p.ctx["sid"], max_age=C.SESSION_MAX_AGE, path="/", httponly=True, samesite="Lax",
                     secure="; Secure" in p.set_cookie,
                 )
-        except Exception as err:   # noqa: BLE001
+        except Exception as err:
             log_rate_limited(err)
         self._finish(request, p, getattr(response, "status_code", 200))
         return response
@@ -133,9 +145,9 @@ class CamadaMiddleware:
             match = getattr(request, "resolver_match", None)
             if match is not None and p.ctx is not None and p.ctx.get("_req") is not None:
                 p.ctx["_req"].route = getattr(match, "route", None) or None
-        except Exception as err:   # noqa: BLE001
+        except Exception as err:
             log_rate_limited(err)
         p.on_finish(status)
 
 
-__all__ = ["CamadaMiddleware", "script_tag", "track"]
+__all__ = ["CamadaMiddleware", "script_tag", "serve_challenge", "track"]
