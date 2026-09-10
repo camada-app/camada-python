@@ -164,12 +164,46 @@ def in_range6(r: Bits, n: int, w: Words) -> bool:
 
 
 def compile_regex(pattern: str) -> re.Pattern[str] | None:
-    """A pattern this runtime rejects never matches, and never throws (fail open). Patterns are
-    authored as JS regexes; Python's `re` reads the common subset identically."""
+    r"""A pattern this runtime rejects never matches, and never throws (fail open). Patterns are
+    authored as JS regexes (the analyst validates them with `new RegExp`), so the JS spellings
+    `re` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them."""
     try:
-        return re.compile(pattern)
+        return re.compile(_js_to_re(pattern), re.ASCII)
     except (re.error, TypeError, ValueError, OverflowError):
         return None
+
+
+def _js_to_re(pattern: str) -> str:
+    r"""The JS-only spellings a tenant is likely to author: `(?<name>` -> `(?P<name>`, `[^]` (any
+    char) -> `[\s\S]`, `\cX` -> the control character. Anything else `re` rejects still fails open."""
+    out: list[str] = []
+    i, n, in_class = 0, len(pattern), False
+    while i < n:
+        ch = pattern[i]
+        if ch == "\\" and i + 1 < n:
+            nxt = pattern[i + 1]
+            if nxt == "c" and i + 2 < n and pattern[i + 2].isalpha():
+                out.append(re.escape(chr(ord(pattern[i + 2].upper()) - 64)))
+                i += 3
+                continue
+            out.append(pattern[i : i + 2])
+            i += 2
+            continue
+        if in_class:
+            in_class = ch != "]"
+        elif ch == "[":
+            if pattern.startswith("[^]", i):
+                out.append("[\\s\\S]")
+                i += 3
+                continue
+            in_class = True
+        elif ch == "(" and pattern.startswith("(?<", i) and not pattern.startswith(("(?<=", "(?<!"), i):
+            out.append("(?P<")
+            i += 3
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 # ---------- custom rules (v5) ----------

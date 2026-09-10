@@ -1,13 +1,14 @@
 # Flask integration: `camada.flask.init_app(app)` wraps app.wsgi_app so camada answers before
-# routing; `script_tag()` and `track("login_failed", user=email)` read the current request.
+# routing; `script_tag()`, `track("login_failed", user=email)` and `serve_challenge()` read the
+# current request.
 from __future__ import annotations
 
 from typing import Any
 
-from flask import Flask, request
+from flask import Flask, Response, request
 
-from . import get_default
-from .engine import Camada, engine_of
+from . import engine_for
+from .engine import Camada
 from .wsgi import CamadaWSGI
 
 
@@ -34,12 +35,20 @@ def _ctx() -> dict[str, Any] | None:
 
 def script_tag() -> str:
     ctx = _ctx()
-    return (engine_of(ctx) or get_default()).script_tag(ctx)
+    return engine_for(ctx).script_tag(ctx)
 
 
 def track(event: str, user: str | None = None) -> None:
     ctx = _ctx()
-    (engine_of(ctx) or get_default()).track(ctx, event, user)
+    engine_for(ctx).track(ctx, event, user)
 
 
-__all__ = ["init_app", "script_tag", "track"]
+def serve_challenge() -> Response | None:
+    """The proof-of-work page (or 403 JSON) to return from a route you gate yourself; None once
+    the browser holds a valid _cch, or when the client cannot be identified (fail open)."""
+    ctx = _ctx()
+    a = engine_for(ctx).serve_challenge(ctx)
+    return None if a is None else Response(a.body, status=a.status, headers=a.headers)
+
+
+__all__ = ["init_app", "script_tag", "serve_challenge", "track"]

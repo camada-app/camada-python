@@ -109,3 +109,41 @@ def test_two_ip_conditions_consume_two_section_pairs_in_order() -> None:
     )
     assert m.match(MatchInput(ip="10.0.0.1")).rule == "r"       # in the first, not in the second
     assert m.match(MatchInput(ip="10.0.0.2")).rule is None      # not in the first
+
+
+def test_js_regex_spellings_are_translated() -> None:
+    m = rules_snapshot([{"id": "ver", "action": "block", "conds": [{"f": "path", "op": "matches", "v": r"^/api/(?<ver>v\d+)/"}]}])
+    assert m.match(MatchInput(path="/api/v2/dump")).rule == "ver"
+    assert m.match(MatchInput(path="/api/v٣/dump")).rule is None   # \d is ASCII, as JS reads it
+    m2 = rules_snapshot([{"id": "any", "action": "block", "conds": [{"f": "ua", "op": "matches", "v": r"^a[^]b\cJ$"}]}])
+    assert m2.match(MatchInput(ua="a\nb\n")).rule == "any"
+    assert m2.match(MatchInput(ua="ab")).rule is None
+
+
+def test_one_matcher_serves_concurrent_requests_without_crosstalk() -> None:
+    import threading
+    import time
+
+    a = (10 << 24) | 1
+    m = rules_snapshot(
+        [{"id": "r", "action": "block", "conds": [{"f": "header", "op": "is", "name": "x-a", "v": "1"}, {"f": "ip", "op": "is_in", "set": True}]}],
+        [(14, [0, a, a]), (15, [0])],
+    )
+
+    def header(_: str) -> str:
+        time.sleep(0)   # hand the GIL to the other request between the header read and the ip check
+        return "1"
+
+    wrong = [0, 0]
+
+    def hammer(slot: int, ip: str, expect: bool) -> None:
+        for _ in range(1500):
+            if m.match(MatchInput(ip=ip, header=header)).block is not expect:
+                wrong[slot] += 1
+
+    ts = [threading.Thread(target=hammer, args=(0, "10.0.0.1", True)), threading.Thread(target=hammer, args=(1, "10.0.0.2", False))]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert wrong == [0, 0]

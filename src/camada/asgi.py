@@ -19,8 +19,8 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 def req_from_scope(scope: Scope) -> Req:
     headers = [(k.decode("latin-1").lower(), v.decode("latin-1")) for k, v in scope.get("headers") or ()]
     query = (scope.get("query_string") or b"").decode("latin-1")
-    client = scope.get("client")
-    host = next((v for k, v in headers if k == "host"), "") or ":".join(str(x) for x in (scope.get("server") or ())[:1])
+    client, server = scope.get("client"), scope.get("server")
+    host = next((v for k, v in headers if k == "host"), "") or (str(server[0]) if server else "")   # the host name, never the port
     return Req(
         method=str(scope.get("method") or "GET"),
         path=str(scope.get("path") or "/"),
@@ -97,7 +97,7 @@ class CamadaASGI:
             body = None
             if limit is not None:
                 body, receive = await read_body(scope, receive, limit)
-        except Exception as err:   # noqa: BLE001
+        except Exception as err:
             log_rate_limited(err)
             await self.app(scope, receive, send)
             return
@@ -134,7 +134,7 @@ class CamadaASGI:
                     if p.set_cookie:
                         headers.append((b"set-cookie", p.set_cookie.encode("latin-1")))
                     m["headers"] = headers
-                except Exception as err:   # noqa: BLE001
+                except Exception as err:
                     log_rate_limited(err)
             await send(m)
             if m["type"] == "http.response.body" and not m.get("more_body"):

@@ -97,3 +97,46 @@ def test_stop_ends_the_flush_thread() -> None:
     q.push({"i": 2})
     time.sleep(0.03)
     assert len(a.events) == n   # nothing flushes on its own after stop()
+
+
+def test_a_waiting_flush_drains_behind_the_one_in_flight() -> None:
+    import threading
+
+    a = FakeAnalyst()
+    gate = threading.Event()
+    inner = a.transport
+
+    def slow(req: object) -> object:
+        gate.wait(2)   # the periodic flush is mid-POST when the exit drain starts
+        return inner(req)  # type: ignore[arg-type]
+
+    q = queue(a, max_batch=1, flush_s=60)
+    q.transport = slow  # type: ignore[assignment]
+    q.push({"i": 1})
+    for _ in range(100):
+        if q._inflight.locked():
+            break
+        time.sleep(0.005)
+    q.push({"i": 2})
+    q.flush()   # the request-path flush yields to the one in flight
+    assert a.events == []
+    t = threading.Thread(target=q.drain, kwargs={"budget_s": 2})
+    t.start()
+    gate.set()
+    t.join(2)
+    assert a.events == [[{"i": 1}], [{"i": 2}]]
+    q.stop()
+
+
+def test_after_fork_starts_empty_with_fresh_locks() -> None:
+    a = FakeAnalyst()
+    q = queue(a, flush_s=60)
+    q.push({"i": 1})
+    lock = q._lock
+    lock.acquire()   # what a child inherits when the parent forked mid-flush
+    q._after_fork()
+    assert q._lock is not lock and q.size == 0 and q._thread is None
+    q.push({"i": 2})   # would deadlock on the inherited lock
+    q.flush()
+    assert a.events == [[{"i": 2}]]
+    q.stop()

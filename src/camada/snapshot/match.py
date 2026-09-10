@@ -1,7 +1,8 @@
 # Matcher: sub-millisecond checks over a parsed Snapshot, ported from @camada/core
 # src/snapshot/match.ts (itself from edge-analyst src/blocklist.js). Matching is fully
-# synchronous and allocation-light; the per-instance scratch of the original is unnecessary
-# here because the parsed address travels as a tuple.
+# synchronous and allocation-light. The original's per-instance scratch request is not ported:
+# a JS isolate runs one match() at a time, but here one Matcher serves every request thread, so
+# the rule loop reads a RuleRequest built per call.
 #
 # Outcome order is contract (contracts §D3, fixtures pin it): the tenant's ordered custom rules
 # first (first match wins, the order IS the precedence), then allow -> block -> challenge.
@@ -68,11 +69,10 @@ def _rule_result(rule: CompiledRule, version: str) -> MatchResult:
 
 
 class Matcher:
-    __slots__ = ("snap", "_req")
+    __slots__ = ("snap",)
 
     def __init__(self, snap: Snapshot) -> None:
         self.snap = snap
-        self._req = RuleRequest()   # scratch: filled per match(), read only inside the rule loop
 
     def _blocked4(self, n: int) -> bool:
         s = self.snap
@@ -187,10 +187,7 @@ class Matcher:
             else:
                 w = parse_ip6(ip)
         if s.rules:
-            r = self._req
-            r.n4, r.ip6 = n4, w
-            r.asn, r.country, r.tlsx = i.asn, i.country, i.tlsx
-            r.path, r.ua, r.header = clean_path(i.path), i.ua, i.header
+            r = RuleRequest(n4=n4, ip6=w, asn=i.asn, country=i.country, tlsx=i.tlsx, path=clean_path(i.path), ua=i.ua, header=i.header)
             for rule in s.rules:   # the order IS the precedence (§A4): first match wins
                 for cond in rule.conds:
                     if not cond(r):

@@ -2,37 +2,24 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 
 import pytest
-from flask import Flask
+from flask import Flask, Response
 
-import camada
 from camada.engine import Camada
-from camada.flask import init_app, script_tag, track
+from camada.flask import init_app, script_tag, serve_challenge, track
 
 from .fake_analyst import BLOCKED_IP, FakeAnalyst
-from .hosts import engine_with, loaded
 
 
 @pytest.fixture
-def analyst() -> FakeAnalyst:
-    return FakeAnalyst()
-
-
-@pytest.fixture
-def engine(analyst: FakeAnalyst, monkeypatch: pytest.MonkeyPatch) -> Iterator[Camada]:
-    e = engine_with(analyst, {"CAMADA_TRUSTED_PROXY": "hops:1"})
-    monkeypatch.setattr(camada, "_default", e)
-    loaded(e)
-    yield e
-    e.stop()
-
-
-@pytest.fixture
-def app(engine: Camada) -> Flask:
+def app(default_engine: Camada) -> Flask:
     app = Flask(__name__)
     init_app(app)
+
+    @app.get("/export")
+    def export() -> Response:
+        return serve_challenge() or Response("file")
 
     @app.get("/")
     def home() -> str:
@@ -46,7 +33,8 @@ def app(engine: Camada) -> Flask:
     return app
 
 
-def test_blocks_captures_and_tracks(app: Flask, engine: Camada, analyst: FakeAnalyst) -> None:
+def test_blocks_captures_and_tracks(app: Flask, default_engine: Camada, analyst: FakeAnalyst) -> None:
+    engine = default_engine
     c = app.test_client()
     assert c.get("/", headers={"x-forwarded-for": BLOCKED_IP}).status_code == 403
     r = c.get("/", headers={"x-forwarded-for": "172.16.0.9"})
@@ -59,10 +47,23 @@ def test_blocks_captures_and_tracks(app: Flask, engine: Camada, analyst: FakeAna
     assert next(e for e in evs if "et" in e)["uid"] and "bob" not in json.dumps(evs)
 
 
-def test_beacon_answers_before_routing(app: Flask, engine: Camada, analyst: FakeAnalyst) -> None:
+def test_beacon_answers_before_routing(app: Flask, default_engine: Camada, analyst: FakeAnalyst) -> None:
+    engine = default_engine
     c = app.test_client()
     assert "@camada/browser" in c.get("/_cam/b.js").get_data(as_text=True)
     assert c.post("/_cam/fp", data=b'{"a":1}', headers={"x-forwarded-for": "198.18.0.5"}).status_code == 204
     engine.queue.flush()  # type: ignore[union-attr]
     (row,) = analyst.all_events
     assert row["sig"] == 1 and row["ip"] == "198.18.0.5"
+
+
+def test_a_route_gates_itself_with_serve_challenge(app: Flask, default_engine: Camada, analyst: FakeAnalyst) -> None:
+    c = app.test_client()
+    html = {"x-forwarded-for": "172.16.0.9", "accept": "text/html", "sec-fetch-dest": "document"}
+    r = c.get("/export", headers=html)
+    assert r.status_code == 403 and r.headers["x-camada-challenge"] == "1" and r.headers["content-type"].startswith("text/html")
+    assert default_engine.kit is not None
+    c.set_cookie("_cch", default_engine.kit.issue("172.16.0.9", default_engine.now_ms()))
+    assert c.get("/export", headers=html).get_data(as_text=True) == "file"
+    default_engine.queue.flush()  # type: ignore[union-attr]
+    assert [(e["st"], e.get("blk")) for e in analyst.all_events] == [(403, "challenge"), (200, None)]

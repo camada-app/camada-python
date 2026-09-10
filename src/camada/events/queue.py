@@ -45,7 +45,10 @@ class EventQueue:
             os.register_at_fork(after_in_child=self._after_fork)
 
     def _after_fork(self) -> None:
-        """A forked worker inherits the queue but not its thread: start fresh on the next push."""
+        """A forked worker inherits the queue but not its thread: start fresh on the next push. The
+        parent keeps its pending events (and may have held _lock mid-flush), so the child starts empty."""
+        self._q = deque()
+        self._lock = threading.Lock()
         self._thread = None
         self._inflight = threading.Lock()
         self._wake = threading.Event()
@@ -57,7 +60,8 @@ class EventQueue:
         return len(self._q)
 
     def push(self, event: Any) -> None:
-        """Synchronous, never raises. Starts the flush thread lazily on first push."""
+        """Synchronous, never raises. Starts the flush thread lazily on first push; a stopped queue
+        stays stopped (configure() replaces the engine rather than reviving one)."""
         try:
             with self._lock:
                 if len(self._q) >= self.max_queue:
@@ -65,12 +69,12 @@ class EventQueue:
                     self.dropped += 1
                 self._q.append(event)
                 n = len(self._q)
-            if self._thread is None and not self._stop.is_set():
-                self._thread = threading.Thread(target=self._run, name="camada-events", daemon=True)
-                self._thread.start()
+                if self._thread is None and not self._stop.is_set():
+                    self._thread = threading.Thread(target=self._run, name="camada-events", daemon=True)
+                    self._thread.start()
             if n >= self.max_batch:
                 self._wake.set()
-        except Exception as err:   # noqa: BLE001 — never into the request path
+        except Exception as err:   # never into the request path
             log_rate_limited(err)
 
     def _run(self) -> None:
@@ -82,10 +86,12 @@ class EventQueue:
                 return
             self.flush()
 
-    def flush(self) -> None:
+    def flush(self, wait: bool = False) -> None:
         """Drains the queue, <=1000 events per POST (the server slices there); single-in-flight;
-        never raises. A full drain matters for the exit flush."""
-        if not self._inflight.acquire(blocking=False):
+        never raises. `wait` queues behind a flush already in flight instead of yielding to it —
+        the exit drain needs the full queue gone, not just the batch someone else is posting."""
+        inflight = self._inflight   # bound once: _after_fork swaps the attribute
+        if not inflight.acquire(blocking=wait):
             return
         try:
             headers = {"x-tenant": self.token, "content-type": "application/json"}
@@ -101,13 +107,13 @@ class EventQueue:
                     res = self.transport(HttpRequest("POST", f"{self.url}/e", headers, body, self.timeout_s))
                     if res.status == 0:
                         raise ConnectionError("ingest unreachable")
-                except Exception as err:   # noqa: BLE001
+                except Exception as err:
                     self.dropped += len(batch)
                     # Dropping telemetry is by design, doing it silently is not: a mount that can never
                     # reach ingest looks identical to a healthy one otherwise.
                     log_rate_limited(err)
         finally:
-            self._inflight.release()
+            inflight.release()
 
     def stop(self) -> None:
         self._stop.set()
@@ -121,9 +127,10 @@ class EventQueue:
             return
         self._exit_installed = True
 
-        def drain() -> None:
-            t = threading.Thread(target=self.flush, name="camada-exit-flush", daemon=True)
-            t.start()
-            t.join(budget_s)
+        atexit.register(self.drain, budget_s)
 
-        atexit.register(drain)
+    def drain(self, budget_s: float = 0.5) -> None:
+        """A full drain (behind any flush in flight) on a daemon thread, abandoned once the budget is spent."""
+        t = threading.Thread(target=self.flush, kwargs={"wait": True}, name="camada-exit-flush", daemon=True)
+        t.start()
+        t.join(budget_s)
