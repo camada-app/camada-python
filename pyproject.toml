@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "camada"
+dynamic = ["version"]
+description = "camada SDK for Python: inline enforcement of your snapshot (ordered custom rules, block, allow, challenge), first-party beacon and proof-of-work challenge, batched event shipping. ASGI and WSGI middleware; Django, Flask and FastAPI integrations."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Internet :: WWW/HTTP :: WSGI :: Middleware",
+  "Topic :: Security",
+  "Framework :: Django",
+  "Framework :: Flask",
+  "Framework :: FastAPI",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "django>=4.2",
+  "flask>=3",
+  "fastapi>=0.110",
+  "httpx>=0.27",
+]
+
+[tool.hatch.version]
+path = "src/camada/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/camada"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/camada", "README.md", "LICENSE"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+
+[tool.mypy]
+strict = true
+files = ["src"]
+python_version = "3.10"
+
+[[tool.mypy.overrides]]
+module = ["django.*", "flask.*", "starlette.*", "fastapi.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
