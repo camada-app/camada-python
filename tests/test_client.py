@@ -6,6 +6,8 @@ from __future__ import annotations
 import gzip
 import time
 
+import pytest
+
 from camada.snapshot.client import SnapshotClient
 from camada.snapshot.match import MatchInput
 from camada.transport import HttpRequest, HttpResponse, urllib_transport
@@ -208,3 +210,21 @@ def test_non_finite_poll_seconds_is_ignored() -> None:
     before = c.refresh_s
     c.refresh()
     assert c.refresh_s == before
+
+
+def test_the_readme_warm_up_waits_for_the_boot_poll(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The README's startup recipe: get_default() has already kicked the boot poll, so a plain refresh()
+    finds the lock held and returns cold; waiting on verdict() until it is not cold is what warms it."""
+    import camada
+
+    a = FakeAnalyst()
+    monkeypatch.setattr(camada, "_default", None)
+    engine = camada.get_default(env={"CAMADA_KEY": "tok-test.snap-test", "CAMADA_INGEST_URL": "https://analyst.test"}, transport=a.transport)
+    try:
+        assert engine.snap is not None
+        deadline = time.monotonic() + 5
+        while engine.snap.verdict(MatchInput(ip="0.0.0.0")).reason == "cold" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert engine.snap.verdict(MatchInput(ip=BLOCKED_IP)).block
+    finally:
+        engine.stop()
