@@ -71,6 +71,8 @@ testpaths = ["tests"]
 addopts = "-q"
 filterwarnings = [
   "error",
+  # third-party test-client deprecations (starlette's httpx2 nudge, anyio alias), not ours
+  "ignore:.*httpx2.*",
   "ignore::DeprecationWarning:starlette.*",
-  "ignore::DeprecationWarning:fastapi.*",
+  "ignore::DeprecationWarning:anyio.*",
 ]

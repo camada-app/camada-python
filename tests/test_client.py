@@ -179,5 +179,6 @@ def test_urllib_transport_gunzips_and_never_raises() -> None:
         assert r.status == 200 and r.body == payload and r.headers["etag"] == '"z"'
     finally:
         srv.shutdown()
+        srv.server_close()
     dead = urllib_transport(HttpRequest("GET", "http://127.0.0.1:1/snapshot", {}, None, 0.2))
     assert dead.status == 0
