@@ -50,6 +50,13 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "W"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["camada"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/camada/beacon_js.py" = ["E501"]   # generated: one vendored JS string
+"tests/*" = ["E501"]
+
 [tool.mypy]
 strict = true
 files = ["src"]
@@ -62,3 +69,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = [
+  "error",
+  "ignore::DeprecationWarning:starlette.*",
+  "ignore::DeprecationWarning:fastapi.*",
+]
