@@ -7,8 +7,10 @@ One package on PyPI with an ASGI middleware (the first-class tier: it keeps the 
 order), a WSGI middleware, and integrations for FastAPI, Django and Flask — the `sentry-sdk`
 model. Fails open by design: a camada outage or bug never 5xxes your app.
 
-Not yet on PyPI — install it from a sibling checkout: `pip install -e ../camada-python`. Python
-3.10 or newer, no runtime dependencies.
+Not yet on PyPI — install it from a sibling checkout: `pip install -e ../camada-python` (or a uv
+path dependency, as [`camada-python-example`](../camada-python-example) does). Publishing is one
+decision with the npm packages (SDK-G01: the scope, real version ranges instead of path links,
+the placeholder ingest URL). Python 3.10 or newer, no runtime dependencies.
 
 ## Quickstart
 
@@ -36,9 +38,12 @@ CAMADA_KEY=<ingest_token>.<snap_token>
 CAMADA_INGEST_URL=http://localhost:8787        # dev only; defaults to production ingest
 ```
 
-The integrations share one lazy engine built from the environment on the first request. Without
-`CAMADA_KEY` it is inert (one log line, no requests, no enforcement). An app that reads its own
-config builds the engine itself and hands it in:
+The integrations share one lazy engine built from the environment on the first request. That
+build starts the snapshot poll on a thread and never blocks, so the request that triggered it is
+answered cold: it passes (fail open) and enforcement begins with the next one. To enforce from
+request 1, warm the engine at startup with one synchronous poll: `camada.get_default().snap.refresh()`.
+Without `CAMADA_KEY` the engine is inert (one log line, no requests, no enforcement). An app that
+reads its own config builds the engine itself and hands it in:
 
 ```python
 from camada import Camada
@@ -164,3 +169,7 @@ The suite reads the golden snapshot fixtures from the `camada-core` sibling chec
 vendored beacon to `camada-browser/dist/auto.global.js` (`npm run build` there first, then
 `python scripts/sync_beacon.py` after a beacon release). Both fail by name when the checkout is
 missing rather than skipping.
+
+[`camada-python-example`](../camada-python-example) is the hand-test bench (FastAPI under uvicorn on
+:3002), and `node scripts/e2e-sdk-python.mjs` in `camada/edge-analyst` drives it against a seeded
+local analyst over real HTTP, cold first request included.
