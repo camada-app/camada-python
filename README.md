@@ -8,9 +8,8 @@ order), a WSGI middleware, and integrations for FastAPI, Django and Flask — th
 model. Fails open by design: a camada outage or bug never 5xxes your app.
 
 Not yet on PyPI — install it from a sibling checkout: `pip install -e ../camada-python` (or a uv
-path dependency, as [`camada-python-example`](../camada-python-example) does). Publishing is one
-decision with the npm packages (SDK-G01: the scope, real version ranges instead of path links,
-the placeholder ingest URL). Python 3.10 or newer, no runtime dependencies.
+path dependency, as [`camada-python-example`](../camada-python-example) does); publishing is one
+decision with the npm packages (SDK-G01). Python 3.10 or newer, no runtime dependencies.
 
 ## Quickstart
 
@@ -40,8 +39,27 @@ CAMADA_INGEST_URL=http://localhost:8787        # dev only; defaults to productio
 
 The integrations share one lazy engine built from the environment on the first request. That
 build starts the snapshot poll on a thread and never blocks, so the request that triggered it is
-answered cold: it passes (fail open) and enforcement begins with the next one. To enforce from
-request 1, warm the engine at startup with one synchronous poll: `camada.get_default().snap.refresh()`.
+answered cold: it passes (fail open), and so does anything else that arrives before that first
+poll lands (a few hundred milliseconds against a local analyst; snapshot-size and network bound).
+To enforce from request 1, warm the engine in a startup hook by waiting for the boot poll —
+`snap.refresh()` alone is not it, the boot poll already holds the single-in-flight lock:
+
+```python
+import time
+import camada
+from camada.snapshot.match import MatchInput
+
+engine = camada.get_default()   # builds the engine; the boot poll is already running on its thread
+if engine.snap:                 # None when CAMADA_KEY is unset or CAMADA_DISABLED=1
+    deadline = time.monotonic() + 5
+    while engine.snap.verdict(MatchInput(ip="0.0.0.0")).reason == "cold" and time.monotonic() < deadline:
+        time.sleep(0.01)        # bounded: an unreachable analyst leaves it cold, and the app still fails open
+```
+
+`snap.refresh()` is not the warm-up: the boot poll holds the single-in-flight lock, so a
+synchronous `refresh()` called right after `get_default()` returns at once and the engine is
+still cold.
+
 Without `CAMADA_KEY` the engine is inert (one log line, no requests, no enforcement). An app that
 reads its own config builds the engine itself and hands it in:
 
