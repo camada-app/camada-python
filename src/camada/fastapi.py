@@ -1,13 +1,15 @@
 # FastAPI / Starlette integration: `app.add_middleware(CamadaMiddleware)` — the pure ASGI
 # middleware, so streaming responses and lifespan are untouched — then `script_tag(request)`
-# in templates and `track(request, "login_failed", user=email)` in handlers.
+# in templates, `track(request, "login_failed", user=email)` in handlers, and
+# `serve_challenge(request)` for a route the app gates itself.
 from __future__ import annotations
 
 from typing import Any
 
-from . import get_default
+from starlette.responses import Response
+
+from . import engine_for
 from .asgi import CamadaASGI as CamadaMiddleware
-from .engine import engine_of
 
 
 def _ctx(request: Any) -> dict[str, Any] | None:
@@ -17,12 +19,20 @@ def _ctx(request: Any) -> dict[str, Any] | None:
 
 def script_tag(request: Any) -> str:
     ctx = _ctx(request)
-    return (engine_of(ctx) or get_default()).script_tag(ctx)
+    return engine_for(ctx).script_tag(ctx)
 
 
 def track(request: Any, event: str, user: str | None = None) -> None:
     ctx = _ctx(request)
-    (engine_of(ctx) or get_default()).track(ctx, event, user)
+    engine_for(ctx).track(ctx, event, user)
 
 
-__all__ = ["CamadaMiddleware", "script_tag", "track"]
+def serve_challenge(request: Any) -> Response | None:
+    """The proof-of-work page (or 403 JSON) to return from a route you gate yourself; None once
+    the browser holds a valid _cch, or when the client cannot be identified (fail open)."""
+    ctx = _ctx(request)
+    a = engine_for(ctx).serve_challenge(ctx)
+    return None if a is None else Response(content=a.body, status_code=a.status, headers=dict(a.headers))
+
+
+__all__ = ["CamadaMiddleware", "script_tag", "serve_challenge", "track"]

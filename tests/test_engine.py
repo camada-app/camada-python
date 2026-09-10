@@ -41,11 +41,6 @@ def driver(request: pytest.FixtureRequest) -> Driver:
 
 
 @pytest.fixture
-def analyst() -> FakeAnalyst:
-    return FakeAnalyst()
-
-
-@pytest.fixture
 def engines() -> Iterator[list[Camada]]:
     made: list[Camada] = []
     yield made
@@ -344,7 +339,6 @@ class TestChallenge:
         # the holder of a valid _cch passes; a cookie minted for another ip does not
         assert h("GET", "/back", headers=[*HTML, ("cookie", cookie.split(";")[0])], peer=CHALLENGED_IP).status == 200
         assert h("GET", "/back", headers=[*HTML, ("cookie", cookie.split(";")[0])], peer="192.0.2.21").status == 200   # not challenged at all
-        h.a.container = "v4"
         assert h("GET", "/back", headers=[*HTML, ("cookie", "_cch=" + cookie.split(";")[0][5:].replace("0", "1", 1))], peer=CHALLENGED_IP).status == 403
 
     def test_wrong_solution_or_forged_nonce_reserves_the_page(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:

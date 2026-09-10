@@ -1,7 +1,7 @@
 # camada
 
-camada for Python: enforces the tenant snapshot inline (your ordered custom rules, then block,
-allow, challenge), serves a first-party proof-of-work challenge page and beacon, records the
+camada for Python: enforces the tenant snapshot inline (your ordered custom rules, then allow,
+block, challenge), serves a first-party proof-of-work challenge page and beacon, records the
 outcomes your handlers know (`track()`), and ships wire events in batches off the request path.
 One package on PyPI with an ASGI middleware (the first-class tier: it keeps the wire's header
 order), a WSGI middleware, and integrations for FastAPI, Django and Flask — the `sentry-sdk`
@@ -123,14 +123,17 @@ event name is free-form; the analyst's app-context rules read this vocabulary:
 | `coupon_failed` | a promo/voucher code was rejected |
 
 A route you gate yourself: `serve_challenge(request)` (Flask: `serve_challenge()`) returns the
-page as an `Answer` until the browser holds a valid `_cch`, then `None`.
+page as a framework response to return from the handler until the browser holds a valid `_cch`,
+then `None`.
 
 ## What this tap can see
 
 `sdk-python` is an in-app tap: status, latency, session, the beacon's browser signals and your
 outcomes. Under ASGI the event also carries the wire's header order (`hord`); WSGI's `environ`
 loses it, which is why ASGI is the first-class tier. camada resolves ASN and country itself. Enforcement at this position covers ip, path, user-agent and
-header conditions — ASN, country and TLS entries fail open in-app.
+header conditions — ASN, country and TLS entries fail open in-app. `matches` patterns are JS
+regexes read by Python's `re` (named groups, `[^]` and `\cX` are translated, `\d`/`\w`/`\b` stay
+ASCII); a spelling `re` still rejects never matches here, while it does at the edge.
 
 ## Deploying it
 

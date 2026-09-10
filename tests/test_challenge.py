@@ -108,7 +108,7 @@ class TestHelpers:
         assert not wants_html("application/json", None) and not wants_html("text/html", "empty") and not wants_html(None, None)
 
     def test_form_body_last_value_wins_and_never_raises(self) -> None:
-        assert parse_form_body("a=1&b=x+y&a=2&c&%zz=%zz") == {"a": "2", "b": "x y", "c": "", "%zz": "%zz"} or True
+        assert parse_form_body("a=1&b=x+y&a=2&c&%zz=%zz") == {"a": "2", "b": "x y", "c": "", "%zz": "%zz"}
         f = parse_form_body("nonce=abc&solution=7&to=%2Fx%3Fy%3D1")
         assert f == {"nonce": "abc", "solution": "7", "to": "/x?y=1"}
         assert parse_form_body("") == {}

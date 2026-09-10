@@ -1,15 +1,12 @@
 # The fail-open envelope: a camada bug must never 5xx the customer. Every public entry point of
-# the SDK runs inside guarded(); failures fall back and log at most once a minute.
+# the SDK catches, falls back, and reports through log_rate_limited(): at most one line a minute.
 from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
-from typing import TypeVar
 
 log = logging.getLogger("camada")
 _last_log = 0.0
-T = TypeVar("T")
 
 
 def log_rate_limited(err: object) -> None:
@@ -22,11 +19,3 @@ def log_rate_limited(err: object) -> None:
         log.error("[camada] suppressed error (SDK fails open): %s", err)
     except Exception:
         pass   # even logging must not raise
-
-
-def guarded(fn: Callable[[], T], fallback: T) -> T:
-    try:
-        return fn()
-    except Exception as err:   # noqa: BLE001 — the whole point: nothing escapes into the app
-        log_rate_limited(err)
-        return fallback

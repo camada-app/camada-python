@@ -34,7 +34,7 @@ def urllib_transport(req: HttpRequest) -> HttpResponse:
     """urllib.request over the stdlib, gzip-aware (GET /snapshot ships ~5 MB that gzips to a few KB)."""
     r = urllib.request.Request(req.url, data=req.body, method=req.method, headers=req.headers)
     try:
-        with urllib.request.urlopen(r, timeout=req.timeout_s) as res:   # noqa: S310 — scheme is the configured analyst URL
+        with urllib.request.urlopen(r, timeout=req.timeout_s) as res:   # the scheme is the configured analyst URL
             return _response(res.status, dict(res.headers.items()), res.read())
     except urllib.error.HTTPError as e:
         try:
