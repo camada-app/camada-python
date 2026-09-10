@@ -37,6 +37,11 @@ dev = [
 [tool.hatch.version]
 path = "src/camada/version.py"
 
+[tool.uv]
+# uv fingerprints a path dependency by its pyproject alone; the version lives in version.py (hatch dynamic),
+# so a consumer's `uv lock` would keep the old number without this
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/camada/version.py" }]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/camada"]
 
