@@ -7,19 +7,19 @@ jobs:
       matrix:
         python: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { path: camada-python }
       # The golden snapshot fixtures the suite is pinned to, and the beacon build the package vendors.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { repository: ${{ github.repository_owner }}/camada-core, path: camada-core }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { repository: ${{ github.repository_owner }}/camada-browser, path: camada-browser }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: 22.x }
       - run: npm install && npm run build
         working-directory: camada-browser
-      - uses: astral-sh/setup-uv@v3
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v10
+      - uses: actions/setup-python@v7
         with: { python-version: ${{ matrix.python }} }
       - run: uv sync
         working-directory: camada-python
