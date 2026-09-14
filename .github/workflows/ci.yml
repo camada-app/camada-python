@@ -11,16 +11,21 @@ jobs:
         with: { path: camada-python }
       # The golden snapshot fixtures the suite is pinned to, and the beacon build the package vendors.
       - uses: actions/checkout@v7
-        with: { repository: ${{ github.repository_owner }}/camada-core, path: camada-core }
+        with:
+          repository: ${{ github.repository_owner }}/camada-core
+          path: camada-core
       - uses: actions/checkout@v7
-        with: { repository: ${{ github.repository_owner }}/camada-browser, path: camada-browser }
+        with:
+          repository: ${{ github.repository_owner }}/camada-browser
+          path: camada-browser
       - uses: actions/setup-node@v7
         with: { node-version: 22.x }
       - run: npm install && npm run build
         working-directory: camada-browser
       - uses: astral-sh/setup-uv@v10
       - uses: actions/setup-python@v7
-        with: { python-version: ${{ matrix.python }} }
+        with:
+          python-version: ${{ matrix.python }}
       - run: uv sync
         working-directory: camada-python
       - run: uv run ruff check
