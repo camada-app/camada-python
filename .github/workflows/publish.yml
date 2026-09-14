@@ -1,0 +1,29 @@
+name: publish
+# Ships a tagged release to PyPI through the trusted publisher (OIDC): no token, no password.
+# Tag must match the version in src/camada/version.py, e.g. `git tag v0.2.0 && git push --tags`.
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv build
+      - name: tag matches the package version
+        run: |
+          v=$(uv run --no-project python -c "import runpy;print(runpy.run_path('src/camada/version.py')['__version__'])")
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != version v$v"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with: { name: dist, path: dist/ }
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist/ }
+      - uses: pypa/gh-action-pypi-publish@release/v1

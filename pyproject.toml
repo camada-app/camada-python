@@ -23,6 +23,11 @@ classifiers = [
   "Framework :: FastAPI",
 ]
 
+[project.urls]
+Homepage = "https://camada.app"
+Repository = "https://github.com/camada-app/camada-python"
+Issues = "https://github.com/camada-app/camada-python/issues"
+
 [dependency-groups]
 dev = [
   "pytest>=8",
