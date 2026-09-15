@@ -339,7 +339,10 @@ class TestChallenge:
         # the holder of a valid _cch passes; a cookie minted for another ip does not
         assert h("GET", "/back", headers=[*HTML, ("cookie", cookie.split(";")[0])], peer=CHALLENGED_IP).status == 200
         assert h("GET", "/back", headers=[*HTML, ("cookie", cookie.split(";")[0])], peer="192.0.2.21").status == 200   # not challenged at all
-        assert h("GET", "/back", headers=[*HTML, ("cookie", "_cch=" + cookie.split(";")[0][5:].replace("0", "1", 1))], peer=CHALLENGED_IP).status == 403
+        # a tampered mac: flip the last hex digit (a replace of the first "0" was a no-op on the hashes that had none)
+        minted = cookie.split(";")[0][5:]
+        tampered = minted[:-1] + ("0" if minted[-1] != "0" else "1")
+        assert h("GET", "/back", headers=[*HTML, ("cookie", "_cch=" + tampered)], peer=CHALLENGED_IP).status == 403
 
     def test_wrong_solution_or_forged_nonce_reserves_the_page(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
         h = Host(driver, analyst, engines)
