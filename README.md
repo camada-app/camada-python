@@ -133,8 +133,10 @@ track(request, "login_failed", user=email)
 ```
 
 The identifier is HMAC-hashed in-process with your ingest token; the raw value never reaches the
-queue. `track()` never raises and is a no-op on a request the middleware did not run for. The
-event name is free-form; the analyst's app-context rules read this vocabulary:
+queue. `track()` never raises. Outside the middleware (a request it did not run for) the outcome
+still ships, with no `rid`/`sid`/`ip` to join on — and it builds the default engine from the
+environment if nothing has yet. The event name is free-form; the analyst's app-context rules read
+this vocabulary:
 
 | event | when |
 |---|---|
