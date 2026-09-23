@@ -11,6 +11,7 @@ import pytest
 from camada.snapshot.client import SnapshotClient
 from camada.snapshot.match import MatchInput
 from camada.transport import HttpRequest, HttpResponse, urllib_transport
+from camada.version import __version__
 
 from .fake_analyst import BLOCKED_IP, FakeAnalyst, frame
 
@@ -159,9 +160,11 @@ def test_urllib_transport_gunzips_and_never_raises() -> None:
     import threading
 
     payload = frame({"version": "z"}, b"BLK")
+    seen: list[str | None] = []
 
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            seen.append(self.headers.get("user-agent"))
             body = gzip.compress(payload)
             self.send_response(200)
             self.send_header("content-encoding", "gzip")
@@ -179,6 +182,8 @@ def test_urllib_transport_gunzips_and_never_raises() -> None:
     try:
         r = urllib_transport(HttpRequest("GET", f"http://127.0.0.1:{srv.server_port}/snapshot", {"accept-encoding": "gzip"}, None, 2.0))
         assert r.status == 200 and r.body == payload and r.headers["etag"] == '"z"'
+        # Cloudflare's Browser Integrity Check 403s urllib's default `Python-urllib/3.x` (error 1010)
+        assert seen == [f"camada-python/{__version__}"]
     finally:
         srv.shutdown()
         srv.server_close()
