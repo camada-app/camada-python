@@ -10,6 +10,12 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from .version import __version__
+
+# urllib's default `Python-urllib/3.x` is refused at the analyst's edge by Cloudflare's Browser
+# Integrity Check (403, error 1010) before the Worker sees it, so every poll and batch would fail.
+USER_AGENT = f"camada-python/{__version__}"
+
 
 @dataclass(slots=True)
 class HttpRequest:
@@ -32,7 +38,7 @@ Transport = Callable[[HttpRequest], HttpResponse]
 
 def urllib_transport(req: HttpRequest) -> HttpResponse:
     """urllib.request over the stdlib, gzip-aware (GET /snapshot ships ~5 MB that gzips to a few KB)."""
-    r = urllib.request.Request(req.url, data=req.body, method=req.method, headers=req.headers)
+    r = urllib.request.Request(req.url, data=req.body, method=req.method, headers={"user-agent": USER_AGENT, **req.headers})
     try:
         with urllib.request.urlopen(r, timeout=req.timeout_s) as res:   # the scheme is the configured analyst URL
             return _response(res.status, dict(res.headers.items()), res.read())
