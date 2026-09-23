@@ -7,11 +7,12 @@ from typing import Any, TypedDict, cast
 
 class TrustedProxy(TypedDict, total=False):
     """Mirrors the server-validated tenant config (edge-analyst src/tenant-config.js):
-    {mode: none} | {mode: hops, hops: N} | {mode: cidrs, cidrs: [...]} | {mode: vercel}."""
+    {mode: none} | {mode: hops, hops: N} | {mode: cidrs, cidrs: [...], cloudflare?: [...]} | {mode: vercel}."""
 
     mode: str
     hops: int
     cidrs: list[str]
+    cloudflare: list[str]   # set by edge-analyst for Cloudflare-fronted origins: which trusted cidrs are Cloudflare edges
 
 
 class RemoteConfig(TypedDict, total=False):

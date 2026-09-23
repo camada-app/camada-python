@@ -150,7 +150,7 @@ class Camada:
         return self.snap is not None and (self.snap.config or {}).get("beacon") is not False
 
     def _ip(self, req: Req) -> str | None:
-        return resolve_client_ip(req.peer, req.header("x-forwarded-for"), self._trusted_proxy())
+        return resolve_client_ip(req.peer, req.header("x-forwarded-for"), self._trusted_proxy(), req.header("cf-connecting-ip"))
 
     # ---- the adapter contract ----
 

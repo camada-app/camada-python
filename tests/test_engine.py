@@ -103,6 +103,14 @@ class TestInlineBlocking:
         h = Host(driver, analyst, engines)
         assert h("GET", "/", **ip(BLOCKED_IP)).status == 403
 
+    def test_cf_connecting_ip_is_enforced_only_behind_a_cloudflare_edge(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
+        analyst.config["trusted_proxy"] = {"mode": "cidrs", "cidrs": ["104.16.0.0/13", "169.254.0.0/16"], "cloudflare": ["104.16.0.0/13"]}
+        h = Host(driver, analyst, engines)
+        via_cf = [("x-forwarded-for", f"{BLOCKED_IP}, 104.22.14.220, 169.254.1.1"), ("cf-connecting-ip", BLOCKED_IP)]
+        assert h("GET", "/", headers=via_cf).status == 403
+        direct = [("x-forwarded-for", "198.18.0.9, 169.254.1.1"), ("cf-connecting-ip", BLOCKED_IP)]   # forged header, no Cloudflare hop
+        assert h("GET", "/", headers=direct).status == 200
+
     def test_fails_open_while_cold(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
         analyst.snapshot_down = True
         h = Host(driver, analyst, engines, load=False)
