@@ -60,10 +60,15 @@ def _in_cidr(ip: str, cidr: _Cidr) -> bool:
     return True
 
 
-def resolve_client_ip(peer: str | None, xff: str | None, cfg: TrustedProxy | None) -> str | None:
+def resolve_client_ip(peer: str | None, xff: str | None, cfg: TrustedProxy | None, cf_ip: str | None = None) -> str | None:
     """The client IP from the socket peer and X-Forwarded-For per the trusted-proxy config.
-    Anything unresolvable falls back to the peer (fail safe)."""
+    Anything unresolvable falls back to the peer (fail safe). `cf_ip` is CF-Connecting-IP: read only
+    under a `cloudflare` list, and only when the hop in front of the client is one of those edges."""
     sock = peer[7:] if peer and peer.startswith("::ffff:") else peer   # dual-stack v4-mapped form
+    if cfg and cfg.get("mode") == "cidrs" and cfg.get("cloudflare") and cf_ip:
+        via_cf = _cloudflare_client(sock, xff, cfg, cf_ip)
+        if via_cf:
+            return via_cf
     if not cfg or cfg.get("mode") == "none" or not xff:
         return sock
     entries = [e.strip() for e in xff.split(",") if e.strip()]
@@ -84,3 +89,22 @@ def resolve_client_ip(peer: str | None, xff: str | None, cfg: TrustedProxy | Non
                 candidate = entry
                 break
     return candidate if candidate and _valid_ip(candidate) else sock
+
+
+def _cloudflare_client(sock: str | None, xff: str | None, cfg: TrustedProxy, cf_ip: str) -> str | None:
+    """CF-Connecting-IP when a Cloudflare edge provably forwarded the request, else None. Walk X-Forwarded-For
+    from the right past the tenant's own trusted hops (the peer stands in only when there is no XFF, as in the
+    cidrs walk); the first hop that is not the tenant's own must be a Cloudflare edge. A direct hit on the
+    origin fails that test, so its forged header is ignored."""
+    cf_ip = cf_ip.strip()
+    if not _valid_ip(cf_ip):
+        return None
+    edges = [c for c in (_parse_cidr(x) for x in cfg.get("cloudflare", [])) if c is not None]
+    edge_set = set(cfg.get("cloudflare", []))
+    own = [c for c in (_parse_cidr(x) for x in cfg.get("cidrs", []) if x not in edge_set) if c is not None]
+    chain = [e.strip() for e in (xff or "").split(",") if e.strip()] or ([sock] if sock else [])
+    for hop in reversed(chain):
+        if any(_in_cidr(hop, t) for t in own):
+            continue
+        return cf_ip if any(_in_cidr(hop, t) for t in edges) else None
+    return None
