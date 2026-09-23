@@ -78,7 +78,9 @@ app.add_middleware(CamadaMiddleware, engine=engine)      # init_app(app, engine=
    snapshot v5 (`x-camada-snapshot: 5`) — the container that carries your ordered custom rules.
 2. Resolves the client from the socket peer (`REMOTE_ADDR` / `scope["client"]`), combined with
    `X-Forwarded-For` only under your tenant's trusted-proxy config (or `CAMADA_TRUSTED_PROXY`
-   locally). A forwarded header on its own is never the ip: any caller can set it.
+   locally). A forwarded header on its own is never the ip: any caller can set it. Behind Cloudflare, pick
+   the Cloudflare option in project settings: `CF-Connecting-IP` is then read, but only when the hop in front
+   of the client is one of Cloudflare's published edges, so a direct hit on your origin cannot forge it.
 3. Enforces before anything else, beacon endpoints included: your ordered custom rules first (first
    match wins; they read ip, path, user-agent and request headers), then allow → block → challenge.
    A block answers `403 Forbidden` with `x-block-reason`, `x-block-version` and, when a rule
