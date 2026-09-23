@@ -175,6 +175,46 @@ ASCII); a spelling `re` still rejects never matches here, while it does at the e
   its last batch.
 - Serverless: `CAMADA_SERVERLESS=1`. A cold invocation fails open and catches up on the next one.
 
+### App Engine, Cloud Run and other request-scoped CPU
+
+App Engine standard, Cloud Run with CPU allocated only during requests, and their kind throttle
+CPU between requests, so camada's threads only progress while a request is in flight. After a cold
+start the boot poll can land 10 s or more late. Until then the engine is cold: it enforces nothing
+(fail open), and with no trusted-proxy config it records the socket peer as the client ip
+(`127.0.0.1` on App Engine). The 15 s flush thread is held back the same way, so batches ship late.
+`CAMADA_SERVERLESS=1` does not change this: it only drops the daemon poll thread (a stale snapshot
+is then refreshed from the request path, which timer mode does too); the boot poll and the flush
+thread still run on threads.
+
+1. Set the trusted proxy locally, so attribution needs no poll. On App Engine `X-Forwarded-For` ends
+   `…, <client>, 169.254.1.1` direct and `…, <client>, <cloudflare edge>, 169.254.1.1` behind
+   Cloudflare: no `hops:N` fits both, Cloudflare's ranges plus `169.254.0.0/16` do. The env value
+   wins over the dashboard's, so keep the two in step and refresh it when Cloudflare's ranges change
+   ([ips-v4](https://www.cloudflare.com/ips-v4), [ips-v6](https://www.cloudflare.com/ips-v6)). The
+   local form reads no `CF-Connecting-IP`: the client is the first hop from the right outside them.
+2. Warm the engine in a warmup request, which holds CPU while the boot poll runs:
+
+```yaml
+# app.yaml
+inbound_services:
+- warmup
+env_variables:
+  CAMADA_TRUSTED_PROXY: "cidrs:169.254.0.0/16,173.245.48.0/20,…,2400:cb00::/32,…"
+```
+
+```python
+# urls.py — warm_camada() is the Quickstart warm-up recipe in a function
+def warmup(request):
+    warm_camada()   # get_default(), then wait (bounded) while the verdict is "cold"
+    return HttpResponse("ok")
+
+urlpatterns = [path("_ah/warmup", warmup), *urlpatterns]
+```
+
+App Engine does not send a warmup to every new instance; step 1 covers the ones it skips. Its own
+cron and task requests arrive from `0.1.0.x` addresses (`0.1.0.2` seen): consider an allow rule so
+enforcement can never touch them.
+
 ## Fail open
 
 Every entry point runs inside the fail-open envelope: a dead ingest drops telemetry (logged at
