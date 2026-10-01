@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import gzip
+import threading
 import time
 
 import pytest
@@ -39,6 +40,31 @@ def test_loads_and_enforces_with_the_contract_headers() -> None:
     assert req.headers["x-camada-snapshot"] == "5"
     assert "if-none-match" not in req.headers
     assert c.config == a.config
+
+
+def test_stays_cold_until_the_first_load_is_fully_published(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Request threads read "not cold" as "rules in place": the first load must not look loaded
+    while its body is still being parsed (the config is already read by then)."""
+    import camada.snapshot.client as client_mod
+
+    parsing, release = threading.Event(), threading.Event()
+    parse = client_mod.parse_snapshot
+
+    def held(*args: object) -> object:
+        parsing.set()
+        release.wait(5)
+        return parse(*args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_mod, "parse_snapshot", held)
+    c = client(FakeAnalyst())
+    load = threading.Thread(target=c.refresh)
+    load.start()
+    assert parsing.wait(5)
+    assert c.verdict(MatchInput(ip=BLOCKED_IP)).reason == "cold"
+    release.set()
+    load.join(5)
+    assert not load.is_alive()
+    assert c.verdict(MatchInput(ip=BLOCKED_IP)).block
 
 
 def test_304_repeats_config_and_keeps_the_snapshot() -> None:
