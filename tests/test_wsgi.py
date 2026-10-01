@@ -82,3 +82,9 @@ def test_wraps_the_default_engine_lazily(monkeypatch: pytest.MonkeyPatch) -> Non
     assert out == b"x" and camada.get_default().disabled
     camada.get_default().stop()
     monkeypatch.setattr(camada, "_default", None)
+
+
+def test_path_info_latin1_bytes_read_back_as_utf8() -> None:
+    environ = {"REQUEST_METHOD": "GET", "PATH_INFO": "/café".encode().decode("latin-1")}
+    assert req_from_environ(environ).path == "/café"
+    assert req_from_environ({"PATH_INFO": "/\udcff"}).path == "/\udcff"   # not latin-1-encodable: kept as is
