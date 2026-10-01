@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from .config import TrustedProxy, parse_key, parse_trusted_proxy_env
 
-# PLACEHOLDER default, the same one @camada/node carries — confirm the production ingest domain before any PyPI publish.
+# Production ingest; CAMADA_INGEST_URL overrides it.
 DEFAULT_INGEST_URL = "https://in.camada.app"
 
 
