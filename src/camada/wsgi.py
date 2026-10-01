@@ -13,6 +13,16 @@ StartResponse = Callable[..., Any]
 WSGIApp = Callable[[dict[str, Any], StartResponse], Iterable[bytes]]
 
 
+def _path_info(environ: dict[str, Any]) -> str:
+    """PATH_INFO is the decoded path's bytes as latin-1 (PEP 3333); read them back as UTF-8, as Django
+    does, so a non-ASCII path matches its rule (§D3 "Path matching") and ships readable."""
+    p = str(environ.get("PATH_INFO") or "/")
+    try:
+        return p.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return p
+
+
 def req_from_environ(environ: dict[str, Any]) -> Req:
     headers: list[tuple[str, str]] = []
     for k, v in environ.items():
@@ -24,7 +34,7 @@ def req_from_environ(environ: dict[str, Any]) -> Req:
     proto = str(environ.get("SERVER_PROTOCOL") or "")
     return Req(
         method=str(environ.get("REQUEST_METHOD") or "GET"),
-        path=str(environ.get("PATH_INFO") or "/"),
+        path=_path_info(environ),
         query="?" + query if query else "",
         host=str(environ.get("HTTP_HOST") or environ.get("SERVER_NAME") or ""),
         http_version=proto[5:] if proto.startswith("HTTP/") else None,

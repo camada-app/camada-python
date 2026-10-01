@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..ipparse import Words
+from .paths import PathForms, canon_path, dir_key, path_hit, path_pred
 
 Bits = memoryview   # a uint32 view: memoryview.cast('I')
 
@@ -76,7 +77,7 @@ class RuleRequest:
     asn: int | None = None
     country: str | None = None
     tlsx: str | None = None
-    path: str = "/"                     # already query-stripped
+    paths: PathForms = ("/", "/", "/")  # (raw with the query cut, lit, full): see snapshot/paths.py
     ua: str | None = None
     header: Callable[[str], str | None] | None = None   # called with an already lower-cased name; absent where the tap cannot read headers
 
@@ -119,8 +120,8 @@ def _range_set(r4: Bits, r6: Bits, m: dict[str, Any] | None) -> RangeSet:
     m = m or {}
     asn = frozenset(int(a) for a in m.get("asn") or [])
     country = frozenset(m.get("country") or [])
-    exact = frozenset(m.get("pathsExact") or [])
-    prefix = frozenset(m.get("pathsPrefix") or [])
+    exact = frozenset(canon_path(p) for p in m.get("pathsExact") or [])   # canonical, once (§D3 "Path matching")
+    prefix = frozenset(dir_key(p) for p in m.get("pathsPrefix") or [])
     empty = len(r4) == 0 and len(r6) == 0 and not asn and not country and not exact and not prefix
     return RangeSet(r4, r6, len(r6) >> 3, asn, country, exact, prefix, empty)
 
@@ -163,12 +164,12 @@ def in_range6(r: Bits, n: int, w: Words) -> bool:
     return _cmp_words(r, o, w) <= 0 and _cmp_words(r, o + 4, w) >= 0
 
 
-def compile_regex(pattern: str) -> re.Pattern[str] | None:
+def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
     r"""A pattern this runtime rejects never matches, and never throws (fail open). Patterns are
     authored as JS regexes (the analyst validates them with `new RegExp`), so the JS spellings
     `re` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them."""
     try:
-        return re.compile(_js_to_re(pattern), re.ASCII)
+        return re.compile(_js_to_re(pattern), re.ASCII | flags)
     except (re.error, TypeError, ValueError, OverflowError):
         return None
 
@@ -218,17 +219,25 @@ def _field_value(f: str, r: RuleRequest) -> str | None:
         return r.country or None
     if f == "tlsx":
         return r.tlsx or None
-    if f == "path":
-        return r.path
     if f == "ua":
         return r.ua or None
     return None   # an entity-plane field (bot.verified, rule): never true here
 
 
-def _compile_cond(c: dict[str, Any], sets: list[tuple[Bits, Bits]]) -> RuleCond:
+def compile_path_regex(pattern: str) -> re.Pattern[str] | None:
+    """A path regex runs case-insensitively (§D3 "Path matching")."""
+    return compile_regex(pattern, re.IGNORECASE)
+
+
+def _compile_cond(c: dict[str, Any], sets: list[tuple[Bits, Bits]], deny: bool = True) -> RuleCond:
     """One condition -> a predicate. `sets` yields this rule's (v4, v6) section pair per ip
-    condition, in condition order, so an ip condition consumes the next one."""
+    condition, in condition order, so an ip condition consumes the next one. `deny` is false for a
+    skip rule: its path conditions need every canonical spelling to match, a block's any one."""
     f, op = str(c.get("f", "")), str(c.get("op", ""))
+    if f == "path":   # every path op reads the canonical forms, never _field_value
+        pv = c.get("v")
+        pred = path_pred(op, [str(x) for x in pv] if isinstance(pv, list) else [str(pv)], compile_path_regex)
+        return lambda r: path_hit(pred, r.paths, deny)
     negate = op in ("is_not", "not_in")
     # A header condition reads the request through the caller's getter. The name is lower-cased
     # once, here; a tap that cannot read headers (no getter) and a header the request does not
@@ -302,7 +311,7 @@ def _compile_rules(meta: dict[str, Any], v4s: list[Bits], v6s: list[Bits]) -> li
         v6 = [s for s in v6s if s[0] == i]
         sets = [(v4[k][1:] if k < len(v4) else _EMPTY, v6[k][1:] if k < len(v6) else _EMPTY) for k in range(max(len(v4), len(v6)))]
         try:
-            conds = [_compile_cond(c, sets) for c in (r.get("conds") or [])]
+            conds = [_compile_cond(c, sets, action != "skip") for c in (r.get("conds") or [])]
         except Exception:
             continue   # a malformed rule is dropped, never enforced
         if conds:   # a rule with no conditions would match everything
@@ -343,9 +352,9 @@ def parse_snapshot(binary: bytes | bytearray | memoryview, meta: dict[str, Any])
         asn_bm=sec.get(8) or _zeros(131072), asn_extra=sec.get(9, _EMPTY),
         country=frozenset(meta.get("country") or []),
         tls=frozenset(meta.get("tls") or []),
-        paths_exact=frozenset(meta.get("pathsExact") or []),
-        paths_prefix=frozenset(meta.get("pathsPrefix") or []),
-        paths_regex=[rx for rx in (compile_regex(p) for p in meta.get("pathsRegex") or []) if rx is not None],
+        paths_exact=frozenset(canon_path(p) for p in meta.get("pathsExact") or []),
+        paths_prefix=frozenset(dir_key(p) for p in meta.get("pathsPrefix") or []),
+        paths_regex=[rx for rx in (compile_path_regex(p) for p in meta.get("pathsRegex") or []) if rx is not None],
         allow=_range_set(sec.get(10, _EMPTY), sec.get(11, _EMPTY), meta.get("allow")),
         challenge=_range_set(sec.get(12, _EMPTY), sec.get(13, _EMPTY), meta.get("challenge")),
         rules=_compile_rules(meta, rule4, rule6),

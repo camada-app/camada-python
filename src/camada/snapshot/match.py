@@ -12,11 +12,13 @@
 # honest enforcement scope (fail open, never guess).
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..ipparse import Words, parse_ip4, parse_ip6
 from .parse import CompiledRule, RangeSet, RuleRequest, Snapshot, in_range4, in_range6
+from .paths import PathForms, path_forms, path_hit, prefixed
 
 
 @dataclass(slots=True)
@@ -42,20 +44,8 @@ class MatchResult:
     version: str | None = None
 
 
-def clean_path(raw: str | None) -> str:
-    p = raw or "/"
-    q = p.find("?")
-    return p if q == -1 else p[:q]
-
-
-def _prefix_hit(prefixes: frozenset[str], path: str) -> bool:
-    """Walks every '/'-terminated ancestor of `path`, the way the block side does."""
-    i = path.find("/", 1)
-    while i != -1:
-        if path[: i + 1] in prefixes:
-            return True
-        i = path.find("/", i + 1)
-    return False
+def _path_in(exact: frozenset[str], prefix: frozenset[str], regex: list[re.Pattern[str]], p: str) -> bool:
+    return p in exact or (bool(prefix) and prefixed(prefix, p)) or any(rx.search(p) for rx in regex)
 
 
 def _rule_result(rule: CompiledRule, version: str) -> MatchResult:
@@ -131,15 +121,11 @@ class Matcher:
                 right = m - 1
         return False
 
-    def _blocked_path(self, path: str) -> bool:
+    def _blocked_path(self, forms: PathForms) -> bool:
         s = self.snap
-        if path in s.paths_exact:
-            return True
-        if s.paths_prefix and _prefix_hit(s.paths_prefix, path):
-            return True
-        return any(rx.search(path) for rx in s.paths_regex)
+        return path_hit(lambda p: _path_in(s.paths_exact, s.paths_prefix, s.paths_regex, p), forms, True)
 
-    def _block_side(self, i: MatchInput, n4: int, w: Words | None) -> str | None:
+    def _block_side(self, i: MatchInput, n4: int, w: Words | None, forms: PathForms) -> str | None:
         """The block side: v3 sections plus the top-level meta."""
         s = self.snap
         if n4 >= 0 and self._blocked4(n4):
@@ -152,13 +138,14 @@ class Matcher:
             return "country"
         if i.tlsx and i.tlsx in s.tls:
             return "tls"
-        if (s.paths_exact or s.paths_prefix or s.paths_regex) and self._blocked_path(clean_path(i.path)):
+        if (s.paths_exact or s.paths_prefix or s.paths_regex) and self._blocked_path(forms):
             return "path"
         return None
 
     @staticmethod
-    def _side(st: RangeSet, i: MatchInput, n4: int, w: Words | None) -> str | None:
-        """A v4 side list (allow or challenge). No tls axis: §A3's side meta has no tls key."""
+    def _side(st: RangeSet, i: MatchInput, n4: int, w: Words | None, forms: PathForms, deny: bool) -> str | None:
+        """A v4 side list (allow or challenge). No tls axis: §A3's side meta has no tls key. The allow
+        side is an exemption (deny=False): every canonical spelling of the path must match."""
         if st.empty:
             return None   # the common v3 snapshot
         if n4 >= 0 and in_range4(st.r4, n4):
@@ -169,12 +156,8 @@ class Matcher:
             return "asn"
         if i.country and i.country in st.country:
             return "country"
-        if st.paths_exact or st.paths_prefix:
-            p = clean_path(i.path)
-            if p in st.paths_exact:
-                return "path"
-            if st.paths_prefix and _prefix_hit(st.paths_prefix, p):
-                return "path"
+        if (st.paths_exact or st.paths_prefix) and path_hit(lambda p: _path_in(st.paths_exact, st.paths_prefix, [], p), forms, deny):
+            return "path"
         return None
 
     def match(self, i: MatchInput) -> MatchResult:
@@ -186,21 +169,22 @@ class Matcher:
                 n4 = parse_ip4(ip)
             else:
                 w = parse_ip6(ip)
+        forms = path_forms(i.path)   # (raw, lit, full): see snapshot/paths.py
         if s.rules:
-            r = RuleRequest(n4=n4, ip6=w, asn=i.asn, country=i.country, tlsx=i.tlsx, path=clean_path(i.path), ua=i.ua, header=i.header)
+            r = RuleRequest(n4=n4, ip6=w, asn=i.asn, country=i.country, tlsx=i.tlsx, paths=forms, ua=i.ua, header=i.header)
             for rule in s.rules:   # the order IS the precedence (§A4): first match wins
                 for cond in rule.conds:
                     if not cond(r):
                         break
                 else:
                     return _rule_result(rule, s.version)
-        reason = self._side(s.allow, i, n4, w)
+        reason = self._side(s.allow, i, n4, w, forms, False)
         if reason:
             return MatchResult(allowed=True, reason=reason, version=s.version)
-        reason = self._block_side(i, n4, w)
+        reason = self._block_side(i, n4, w, forms)
         if reason:
             return MatchResult(block=True, reason=reason, version=s.version)
-        reason = self._side(s.challenge, i, n4, w)
+        reason = self._side(s.challenge, i, n4, w, forms, True)
         if reason:
             return MatchResult(challenge=True, reason=reason, version=s.version)
         return MatchResult(version=s.version)
