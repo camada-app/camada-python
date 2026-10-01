@@ -177,7 +177,7 @@ class Camada:
         if self.disabled or self.snap is None or self.queue is None or self.env is None:
             return INERT
         queue = self.queue
-        t0 = time.monotonic()
+        t0, ts0 = time.monotonic(), self.now_ms()   # ts is the request start, the moment dur counts from
         self.snap.ensure_fresh()
         ip = self._ip(req)
 
@@ -240,7 +240,7 @@ class Camada:
                 if ctx.get("challenged") or excluded or not sampled:
                     return
                 ev = self._event(req, rid, sid, new_session, ip)
-                ev["st"], ev["dur"] = status, int((time.monotonic() - t0) * 1000)
+                ev["ts"], ev["st"], ev["dur"] = ts0, status, int((time.monotonic() - t0) * 1000)
                 if req.route:
                     ev["rt"] = req.route
                 if warn_rule:

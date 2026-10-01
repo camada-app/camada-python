@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -152,6 +153,19 @@ class TestCapture:
         assert ev["m"] == "POST" and ev["p"] == "/things" and ev["q"] == "?q=1&token=~r" and ev["ua"] == "UA/1"
         assert ev["ip"] == "172.16.0.9" and ev["proto"] == "HTTP/1.1" and ev["h"] == "x.test"
         assert "blk" not in ev and "wrn" not in ev
+
+    def test_ts_is_the_request_start_not_the_finish(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
+        def slow(_: dict[str, Any]) -> tuple[int, list[tuple[str, str]], bytes]:
+            time.sleep(0.2)
+            return 200, [], b"ok"
+        h = Host(driver, analyst, engines, handler=slow)
+        start = int(time.time() * 1000)
+        h("GET", "/slow")
+        end = int(time.time() * 1000)
+        (ev,) = h.events()
+        assert ev["dur"] >= 200
+        assert start <= ev["ts"] < start + 100   # stamped as the request came in, not one dur later
+        assert abs(ev["ts"] + ev["dur"] - end) < 100   # so the bar [ts, ts + dur] ends when the response did
 
     def test_reuses_the_session_cookie_and_marks_https_secure(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
         h = Host(driver, analyst, engines)
