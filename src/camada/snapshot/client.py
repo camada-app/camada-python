@@ -3,7 +3,7 @@
 #   200  [u32 LE meta-length][meta JSON][BLK container] + etag + x-camada-config
 #   304  nothing changed; config header repeated (config refreshes every poll for free)
 #   204  authenticated, no snapshot published -> enforce nothing, fail open
-# Semantics ported exactly: single-in-flight load; loaded_at stamped even on 204 (retry per
+# Semantics ported exactly: single-in-flight load; loaded_at stamped last, even on 204 (retry per
 # poll cadence, not per request); any error keeps the previous snapshot; cold = fail open.
 # Timers are threads here: timer mode runs one daemon thread per client; lazy mode kicks a
 # one-shot daemon thread from ensure_fresh() so the request path never waits on the network.
@@ -20,7 +20,7 @@ from typing import Any, Literal
 from ..config import RemoteConfig, remote_config
 from ..constants import DEFAULT_REFRESH_S, DEFAULT_SNAPSHOT_VERSION
 from ..guarded import log_rate_limited
-from ..transport import HttpRequest, Transport, urllib_transport
+from ..transport import HttpRequest, HttpResponse, Transport, urllib_transport
 from .match import Matcher, MatchInput, MatchResult
 from .parse import parse_snapshot
 
@@ -117,7 +117,15 @@ class SnapshotClient:
         res = self.transport(HttpRequest("GET", self.url, headers, None, self.timeout_s))
         if res.status not in (200, 204, 304):
             return   # 401/5xx/network: keep what we have
-        self._loaded_at = time.monotonic()
+        # _loaded_at is stamped last (even when the body turns out corrupt): "not cold" is what the
+        # request threads read as "rules in place", so it must not be visible before the matcher
+        # and config are: it is assigned after both, so a reader that sees it sees them.
+        try:
+            self._publish(res)
+        finally:
+            self._loaded_at = time.monotonic()
+
+    def _publish(self, res: HttpResponse) -> None:
         self._read_config(res.headers.get("x-camada-config"))
         if res.status == 304:
             return
