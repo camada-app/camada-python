@@ -8,7 +8,7 @@ order), a WSGI middleware, and integrations for FastAPI, Django and Flask — th
 model. Fails open by design: a camada outage or bug never 5xxes your app.
 
 Not yet on PyPI — install it from a sibling checkout: `pip install -e ../camada-python` (or a uv
-path dependency, as [`camada-python-example`](../camada-python-example) does); publishing is one
+path dependency, as [`camada-python-example`](https://github.com/camada-app/camada-python-example) does); publishing is one
 decision with the npm packages (SDK-G01). Python 3.10 or newer, no runtime dependencies.
 
 ## Quickstart
@@ -30,7 +30,7 @@ from camada.asgi import CamadaASGI      # application = CamadaASGI(application)
 from camada.wsgi import CamadaWSGI      # application = CamadaWSGI(application)
 ```
 
-Env (printed by camada onboarding / `npm run seed` in dev):
+Env (the key is printed once when you create a project in the app):
 
 ```
 CAMADA_KEY=<ingest_token>.<snap_token>
@@ -232,6 +232,6 @@ vendored beacon to `camada-browser/dist/auto.global.js` (`npm run build` there f
 `python scripts/sync_beacon.py` after a beacon release). Both fail by name when the checkout is
 missing rather than skipping.
 
-[`camada-python-example`](../camada-python-example) is the hand-test bench (FastAPI under uvicorn on
+[`camada-python-example`](https://github.com/camada-app/camada-python-example) is the hand-test bench (FastAPI under uvicorn on
 :3002), and `node scripts/e2e-sdk-python.mjs` in `camada/edge-analyst` drives it against a seeded
 local analyst over real HTTP, cold first request included.
