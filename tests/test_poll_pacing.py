@@ -57,7 +57,7 @@ def test_timeline(tl: dict[str, Any]) -> None:
     rig = Rig(tl["refreshSeconds"], tl["clockBase"])
     for step in tl["steps"]:
         rig.now = tl["clockBase"] + step["t"]
-        assert rig.c.due == step["poll"], f"t={step['t']}"
+        assert rig.c._due == step["poll"], f"t={step['t']}"
         if not step["poll"]:
             continue
         rig.reply = step["respond"]
@@ -71,7 +71,7 @@ def test_timeline(tl: dict[str, Any]) -> None:
 def test_cold_client_polls_when_the_clock_is_near_zero() -> None:
     """F1: time.monotonic() counts from boot, so a cold client must be stale whatever the clock reads."""
     rig = Rig(30, 1.0)
-    assert rig.c.stale and rig.c.due
+    assert rig.c.stale and rig.c._due
 
 
 def test_background_kick_rechecks_due_after_taking_the_slot() -> None:
@@ -137,11 +137,11 @@ def test_raising_transport_is_gated_as_no_answer_and_logged(monkeypatch: pytest.
     rig.c.transport = boom
     rig.c.refresh()
     assert rig.polls == 1 and len(logged) == 1           # still logged
-    assert not rig.c.due                                 # gated right after
+    assert not rig.c._due                                 # gated right after
     rig.now += 4.9
-    assert not rig.c.due
+    assert not rig.c._due
     rig.now += 0.1
-    assert rig.c.due                                     # due again at +5 s (the floor)
+    assert rig.c._due                                     # due again at +5 s (the floor)
 
 
 def test_undecodable_gzip_body_passes_no_headers_on() -> None:
