@@ -111,29 +111,32 @@ class SnapshotClient:
         return self._loaded_at == 0 or self._clock() - self._loaded_at > self.refresh_s * 0.9
 
     @property
-    def due(self) -> bool:
+    def _due(self) -> bool:
         """Stale and past the failure gate: what every self-initiated poll checks (no slack on the gate)."""
         return self.stale and self._clock() >= self._not_before
 
     def ensure_fresh(self) -> None:
         """Kicks a refresh when due; never blocks the request path, never raises."""
-        if not self.due or self._loading.locked():
+        if not self._due or self._loading.locked():
             return
         threading.Thread(target=self._refresh_if_due, name="camada-snapshot-load", daemon=True).start()
 
     def _refresh_if_due(self) -> None:
-        """What the spawned thread runs: re-check `due` after taking the slot, so a second kick that
+        """What the spawned thread runs: re-check `_due` after taking the slot, so a second kick that
         lost the race to a poll which just finished (and gated) does not poll again."""
-        self.refresh(only_if_due=True)
+        self._poll(only_if_due=True)
 
-    def refresh(self, *, only_if_due: bool = False) -> None:
+    def refresh(self) -> None:
         """One synchronous poll (single in-flight). Unconditional (ignores the failure gate, still sets
-        it on failure) for tests and warm-ups; the background kick passes only_if_due."""
+        it on failure) for tests and warm-ups."""
+        self._poll(only_if_due=False)
+
+    def _poll(self, *, only_if_due: bool) -> None:
         lock = self._loading   # bound once: _after_fork swaps the attribute
         if not lock.acquire(blocking=False):
             return
         try:
-            if only_if_due and not self.due:
+            if only_if_due and not self._due:
                 return
             self._load()
         except Exception as err:   # a poll that can never succeed must not be silent, nor fatal
