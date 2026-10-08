@@ -15,6 +15,7 @@ import os
 import struct
 import threading
 import time
+from collections.abc import Callable
 from typing import Any, Literal
 
 from ..config import RemoteConfig, remote_config
@@ -24,8 +25,26 @@ from ..transport import HttpRequest, HttpResponse, Transport, urllib_transport
 from .match import Matcher, MatchInput, MatchResult
 from .parse import parse_snapshot
 
+POLL_FLOOR_S = 5.0     # a failed poll is never retried sooner than this (camada-all-pbv9)
 COLD = MatchResult(reason="cold")   # never loaded yet: fail open, mirrors the collector
 NONE = MatchResult()
+
+
+def _parse_retry_after(raw: str | None) -> float:
+    """delta-seconds only (what edge-analyst sends); anything else, HTTP-dates included, reads as 0
+    so the floor applies. An all-digit value too long to matter reads as huge, never invalid."""
+    v = (raw or "").strip(" \t")
+    if not (v.isascii() and v.isdigit()):
+        return 0.0
+    return 1e9 if len(v) > 9 else float(int(v))
+
+
+def next_poll_delay(status: int, retry_after: str | None, refresh_s: float) -> float | None:
+    """Seconds to wait after a poll answered `status` (0 = no answer); None for 200/204/304, which
+    are not paced. min(max(retry-after, 5 s), refresh): the cap wins over the floor."""
+    if status in (200, 204, 304):
+        return None
+    return min(max(_parse_retry_after(retry_after), POLL_FLOOR_S), max(refresh_s, 0.0))
 
 
 class SnapshotClient:
@@ -50,6 +69,8 @@ class SnapshotClient:
         self._pinned = refresh_s is not None
         self._etag: str | None = None
         self._loaded_at = 0.0
+        self._not_before = 0.0      # a failed poll gates the next self-initiated one until then
+        self._clock: Callable[[], float] = time.monotonic
         self._loading = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -85,21 +106,35 @@ class SnapshotClient:
     @property
     def stale(self) -> bool:
         # 0.9 x refresh so a timer tick arriving at ~refresh-ε still refreshes; a full-interval
-        # comparison makes every other tick a no-op (effective cadence 2x).
-        return time.monotonic() - self._loaded_at > self.refresh_s * 0.9
+        # comparison makes every other tick a no-op (effective cadence 2x). Never loaded is stale
+        # whatever the clock reads (monotonic counts from boot, so it can be < 27 s).
+        return self._loaded_at == 0 or self._clock() - self._loaded_at > self.refresh_s * 0.9
+
+    @property
+    def due(self) -> bool:
+        """Stale and past the failure gate: what every self-initiated poll checks (no slack on the gate)."""
+        return self.stale and self._clock() >= self._not_before
 
     def ensure_fresh(self) -> None:
-        """Kicks a refresh when stale; never blocks the request path, never raises."""
-        if not self.stale or self._loading.locked():
+        """Kicks a refresh when due; never blocks the request path, never raises."""
+        if not self.due or self._loading.locked():
             return
-        threading.Thread(target=self.refresh, name="camada-snapshot-load", daemon=True).start()
+        threading.Thread(target=self._refresh_if_due, name="camada-snapshot-load", daemon=True).start()
 
-    def refresh(self) -> None:
-        """One synchronous poll (single in-flight): what the threads call, and what tests and warm-ups call directly."""
+    def _refresh_if_due(self) -> None:
+        """What the spawned thread runs: re-check `due` after taking the slot, so a second kick that
+        lost the race to a poll which just finished (and gated) does not poll again."""
+        self.refresh(only_if_due=True)
+
+    def refresh(self, *, only_if_due: bool = False) -> None:
+        """One synchronous poll (single in-flight). Unconditional (ignores the failure gate, still sets
+        it on failure) for tests and warm-ups; the background kick passes only_if_due."""
         lock = self._loading   # bound once: _after_fork swaps the attribute
         if not lock.acquire(blocking=False):
             return
         try:
+            if only_if_due and not self.due:
+                return
             self._load()
         except Exception as err:   # a poll that can never succeed must not be silent, nor fatal
             log_rate_limited(err)
@@ -114,16 +149,27 @@ class SnapshotClient:
             headers["x-camada-sdk"] = self.sdk
         if self.snapshot_version > 3:
             headers["x-camada-snapshot"] = str(self.snapshot_version)   # a tenant without that container is answered with the next one down
-        res = self.transport(HttpRequest("GET", self.url, headers, None, self.timeout_s))
+        try:
+            res = self.transport(HttpRequest("GET", self.url, headers, None, self.timeout_s))
+        except Exception:
+            self._gate(0, None)   # no answer is a failed poll too
+            raise
         if res.status not in (200, 204, 304):
-            return   # 401/5xx/network: keep what we have
+            self._gate(res.status, res.headers.get("retry-after"))
+            return   # 401/5xx/network: keep what we have, and wait before asking again
+        self._not_before = 0.0
         # _loaded_at is stamped last (even when the body turns out corrupt): "not cold" is what the
         # request threads read as "rules in place", so it must not be visible before the matcher
         # and config are: it is assigned after both, so a reader that sees it sees them.
         try:
             self._publish(res)
         finally:
-            self._loaded_at = time.monotonic()
+            self._loaded_at = self._clock()
+
+    def _gate(self, status: int, retry_after: str | None) -> None:
+        """Written before the single-flight slot is released (refresh()'s finally), so a request that sees the slot free sees the gate."""
+        delay = next_poll_delay(status, retry_after, self.refresh_s)
+        self._not_before = self._clock() + (delay or 0.0)
 
     def _publish(self, res: HttpResponse) -> None:
         self._read_config(res.headers.get("x-camada-config"))

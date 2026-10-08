@@ -219,7 +219,9 @@ enforcement can never touch them.
 
 Every entry point runs inside the fail-open envelope: a dead ingest drops telemetry (logged at
 most once a minute), a corrupt snapshot keeps the previous one, a bug in the package costs the
-request its join, never its response. `CAMADA_DISABLED=1` bypasses everything.
+request its join, never its response. A snapshot poll that fails (any status but 200/204/304, or
+no answer) keeps the rules you have and is not retried sooner than `max(Retry-After, 5 s)`, capped
+at the refresh interval. `CAMADA_DISABLED=1` bypasses everything.
 
 ## Development
 
