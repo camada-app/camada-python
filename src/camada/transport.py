@@ -58,6 +58,6 @@ def _response(status: int, headers: dict[str, str], body: bytes) -> HttpResponse
         try:
             body = gzip.decompress(body)
         except Exception:
-            return HttpResponse(0, lower, b"")   # a body we cannot read is no answer at all
+            return HttpResponse(0, {}, b"")   # a body we cannot read is no answer at all: no headers, no retry-after
         lower.pop("content-encoding", None)
     return HttpResponse(status, lower, body)

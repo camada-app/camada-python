@@ -94,3 +94,58 @@ def test_ensure_fresh_spawns_a_thread_that_polls_once_when_due() -> None:
     rig.c._refresh_if_due = lambda: (orig(), done.set())[0]  # type: ignore[method-assign]
     rig.c.ensure_fresh()
     assert done.wait(5) and rig.polls == 1
+
+
+def _join(c: SnapshotClient) -> None:
+    """Wait for any background load ensure_fresh started (the slot is held while it runs)."""
+    for t in threading.enumerate():
+        if t.name == "camada-snapshot-load":
+            t.join(5)
+
+
+def test_ensure_fresh_honours_a_closed_gate() -> None:
+    """Request path: one poll per retry-after, not one per request (reverting to `stale` fails this)."""
+    rig = Rig(60, 1000.0)
+    rig.c.ensure_fresh()
+    _join(rig.c)
+    assert rig.polls == 1                                # warm: 200
+    rig.now += 55                                        # stale: > 0.9 x 60
+    rig.reply = {"status": 503, "retryAfter": "30"}
+    for _ in range(5):
+        rig.c.ensure_fresh()
+        _join(rig.c)
+    assert rig.polls == 2                                # exactly one failed poll
+    rig.now += 29
+    rig.c.ensure_fresh()
+    _join(rig.c)
+    assert rig.polls == 2
+    rig.now += 1
+    rig.c.ensure_fresh()
+    _join(rig.c)
+    assert rig.polls == 3                                # +30 s: due again
+
+
+def test_raising_transport_is_gated_as_no_answer_and_logged(monkeypatch: pytest.MonkeyPatch) -> None:
+    logged: list[BaseException] = []
+    monkeypatch.setattr("camada.snapshot.client.log_rate_limited", logged.append)
+    rig = Rig(30, 1000.0)
+
+    def boom(req: HttpRequest) -> HttpResponse:
+        rig.polls += 1
+        raise RuntimeError("boom")
+
+    rig.c.transport = boom
+    rig.c.refresh()
+    assert rig.polls == 1 and len(logged) == 1           # still logged
+    assert not rig.c.due                                 # gated right after
+    rig.now += 4.9
+    assert not rig.c.due
+    rig.now += 0.1
+    assert rig.c.due                                     # due again at +5 s (the floor)
+
+
+def test_undecodable_gzip_body_passes_no_headers_on() -> None:
+    from camada.transport import _response
+
+    res = _response(503, {"Content-Encoding": "gzip", "Retry-After": "30"}, b"not gzip")
+    assert res.status == 0 and res.headers == {}
