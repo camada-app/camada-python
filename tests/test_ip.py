@@ -139,3 +139,4 @@ def test_loopback_peer_is_a_trusted_hop_only_as_the_peer() -> None:
 def test_no_peer_keeps_the_plain_walk() -> None:
     assert resolve_client_ip(None, "1.2.3.4, 198.51.100.9, 172.64.1.1", CLOUDFLARE) == "198.51.100.9"
     assert resolve_client_ip(None, "172.64.1.1", CLOUDFLARE) is None
+    assert resolve_client_ip("unix:/run/app.sock", "198.51.100.9, 172.64.1.1", CLOUDFLARE) == "198.51.100.9"   # a local proxy

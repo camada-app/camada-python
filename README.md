@@ -83,7 +83,7 @@ app.add_middleware(CamadaMiddleware, engine=engine)      # init_app(app, engine=
    Cloudflare option, stored as `cidrs`) the socket peer must itself be one of the trusted ranges or a
    loopback address (a local front end such as App Engine's `127.0.0.1`); otherwise the peer is the
    client and `X-Forwarded-For` is ignored, so a direct hit on your origin cannot pick its own ip. A host
-   that reports no peer at all keeps the plain walk and trusts its network edge. Behind Cloudflare, pick
+   that reports no peer (or a unix socket) keeps the plain walk and trusts its network edge. Behind Cloudflare, pick
    the Cloudflare option in project settings: `CF-Connecting-IP` is then read, but only when the hop in front
    of the client is one of Cloudflare's published edges, so a direct hit on your origin cannot forge it.
 3. Enforces before anything else, beacon endpoints included: your ordered custom rules first (first
