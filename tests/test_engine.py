@@ -90,6 +90,7 @@ class TestInlineBlocking:
         assert r.status == 403 and r.body == b"Forbidden"
         assert r.header("x-block-reason") == "ip4" and r.header("x-block-version") == analyst.meta["version"]
         assert r.header("content-type") == "text/plain" and r.header("x-block-rule") is None
+        assert r.headers_named("cache-control") == ["no-store"]   # a per-visitor answer no shared cache may keep (camada-all-8lp6)
         assert h.seen == []
         (ev,) = h.events()
         assert ev["st"] == 403 and ev["blk"] == "ip4" and ev["ip"] == BLOCKED_IP and ev["p"] == "/admin" and ev["tap"] == "sdk-python"
@@ -300,6 +301,7 @@ class TestRules:
         h = Host(driver, analyst, engines)
         r = h("GET", "/", **ip(RULE_BLOCKED_IP))
         assert r.status == 403 and r.header("x-block-reason") == "rule" and r.header("x-block-rule") == "builtin:block"
+        assert r.header("cache-control") == "no-store"
         (ev,) = h.events()
         assert ev["blk"] == "rule" and ev["rl"] == "builtin:block"
 
