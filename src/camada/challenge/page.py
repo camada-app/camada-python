@@ -131,12 +131,14 @@ def _sha256(text: str) -> str:
 def _csp(bits: int) -> str:
     return (
         f"default-src 'none'; script-src {_sha256(_solver_script(bits))}; style-src {_sha256(chr(10) + _STYLE)}; "
-        "form-action 'self'; base-uri 'none'; frame-ancestors 'self'"
+        "base-uri 'none'; frame-ancestors 'self'"
     )
 
 
 def challenge_page_csp(bits: int = POW_BITS) -> str:
     """The Content-Security-Policy to send with challenge_page(bits=...): it allows only the page's own inline script
-    and style (by 'sha256-...' hash), a form post to the same origin, and nothing else. Send it as the response's only
-    CSP, removing any Content-Security-Policy or Content-Security-Policy-Report-Only the app set."""
+    and style (by 'sha256-...' hash) and nothing else. There is no form-action: browsers apply it to the redirects that
+    follow the POST too, so an app whose page 302s on to an external sign-in after verify's 302 would be blocked. Send
+    it as the response's only CSP, removing any Content-Security-Policy or Content-Security-Policy-Report-Only the app
+    set."""
     return _csp(_clamp(bits))
