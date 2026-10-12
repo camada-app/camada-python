@@ -12,7 +12,7 @@ from django.http import HttpRequest, HttpResponse, HttpResponseBase
 
 from . import constants as C
 from . import engine_for, get_default
-from .engine import INERT, Answer, Camada, Passed
+from .engine import INERT, Answer, Camada, Passed, own_challenge_csp
 from .guarded import log_rate_limited
 from .wsgi import req_from_environ
 
@@ -132,6 +132,14 @@ class CamadaMiddleware:
                     C.SESSION_COOKIE, p.ctx["sid"], max_age=C.SESSION_MAX_AGE, path="/", httponly=True, samesite="Lax",
                     secure="; Secure" in p.set_cookie,
                 )
+            if p.ctx is not None and p.ctx.get("challenged"):
+                headers = list(response.items())
+                owned = own_challenge_csp(headers)
+                if owned is not headers:
+                    for name in ("Content-Security-Policy", "Content-Security-Policy-Report-Only"):
+                        if response.has_header(name):
+                            del response[name]
+                    response["Content-Security-Policy"] = owned[-1][1]
         except Exception as err:
             log_rate_limited(err)
         self._finish(request, p, getattr(response, "status_code", 200))

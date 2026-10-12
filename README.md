@@ -78,7 +78,12 @@ app.add_middleware(CamadaMiddleware, engine=engine)      # init_app(app, engine=
    snapshot v5 (`x-camada-snapshot: 5`) — the container that carries your ordered custom rules.
 2. Resolves the client from the socket peer (`REMOTE_ADDR` / `scope["client"]`), combined with
    `X-Forwarded-For` only under your tenant's trusted-proxy config (or `CAMADA_TRUSTED_PROXY`
-   locally). A forwarded header on its own is never the ip: any caller can set it. Behind Cloudflare, pick
+   locally). A forwarded header on its own is never the ip: any caller can set it. Entries may carry a
+   port (`ip:port`, `[v6]:port`, as Azure Application Gateway writes them). Under `cidrs` (and the
+   Cloudflare option, stored as `cidrs`) the socket peer must itself be one of the trusted ranges or a
+   loopback address (a local front end such as App Engine's `127.0.0.1`); otherwise the peer is the
+   client and `X-Forwarded-For` is ignored, so a direct hit on your origin cannot pick its own ip. A host
+   that reports no peer at all keeps the plain walk and trusts its network edge. Behind Cloudflare, pick
    the Cloudflare option in project settings: `CF-Connecting-IP` is then read, but only when the hop in front
    of the client is one of Cloudflare's published edges, so a direct hit on your origin cannot forge it.
 3. Enforces before anything else, beacon endpoints included: your ordered custom rules first (first
@@ -88,12 +93,15 @@ app.add_middleware(CamadaMiddleware, engine=engine)      # init_app(app, engine=
    `wrn`; a `skip` rule passes with nothing stamped. Cold (no snapshot yet) passes: fail open.
 4. Challenge: a `challenge` verdict gets the self-contained proof-of-work page (or 403 JSON for a
    non-HTML request); `POST /__camada/challenge` verifies the solution, sets `_cch` (bound to the
-   ip, one hour) and 302s back. A request whose ip cannot be resolved is never challenged.
+   ip, one hour) and 302s back. A request whose ip cannot be resolved is never challenged. The page
+   carries its own `Content-Security-Policy` (its inline solver and style by hash, `form-action 'self'`)
+   and replaces any policy your app or middleware set on it, so a strict site CSP cannot block it.
 5. Serves the beacon: `GET /_cam/b.js` (the `@camada/browser` build, vendored) and `POST /_cam/fp`
    (≤ 32 KB, relayed onto the event batch as a `sig: 1` row with the ip camada resolved). Both
    fall through to your app when the tenant switched the beacon off.
 6. Runs your app with `x-rid` and the `_sfp` session cookie on its response, and when the response
-   is done ships one redacted event: method, host, path, scrubbed query, status, latency, header
+   is done ships one redacted event: method, host, path, scrubbed query (and `Referer` query and
+   fragment), status, latency, header
    names/sizes/order, the auth scheme (never the credential), cookie count (never values). An
    exception in your app ships as `st: 500` and propagates unchanged.
 

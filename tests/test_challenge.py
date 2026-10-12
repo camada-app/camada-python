@@ -3,7 +3,9 @@
 # from camada-core/test/challenge.test.ts.
 from __future__ import annotations
 
+import base64
 import hashlib
+import re
 
 from camada.challenge.format import (
     NONCE_HEX,
@@ -15,7 +17,7 @@ from camada.challenge.format import (
     safe_return_to,
     wants_html,
 )
-from camada.challenge.page import challenge_page
+from camada.challenge.page import challenge_page, challenge_page_csp
 from camada.challenge.verify import create_challenge
 
 DAY_MS = 86_400_000
@@ -131,3 +133,43 @@ class TestPage:
     def test_difficulty_is_clamped(self) -> None:
         assert "shift=0" in challenge_page(nonce="a" * 32, action="/v", to="/", bits=99)
         assert "shift=31" in challenge_page(nonce="a" * 32, action="/v", to="/", bits=0)
+
+
+def _inline(page: str, tag: str) -> list[str]:
+    return re.findall(rf"<{tag}>(.*?)</{tag}>", page, re.S)
+
+
+def _sha(s: str) -> str:
+    return "'sha256-" + base64.b64encode(hashlib.sha256(s.encode()).digest()).decode() + "'"
+
+
+class TestPageCsp:
+    """camada-all-y38o (core's mwpo): the page sends its own CSP allowing only its inline solver and style by hash,
+    so an app-wide strict CSP cannot block the solver. The script reads the nonce from the form, so it is fixed per bits."""
+
+    def test_allows_exactly_the_served_inline_script_and_style(self) -> None:
+        for bits in (None, 1, 12, 16, 20, 32):
+            page = challenge_page(nonce="abc123", action="/__camada/challenge", to="/x", **({} if bits is None else {"bits": bits}))
+            csp = challenge_page_csp() if bits is None else challenge_page_csp(bits)
+            (script,) = _inline(page, "script")
+            (style,) = _inline(page, "style")
+            assert f"script-src {_sha(script)};" in csp
+            assert f"style-src {_sha(style)};" in csp
+            assert "default-src 'none'" in csp and "form-action 'self'" in csp and "unsafe" not in csp
+
+    def test_fixed_per_bits_value_and_the_nonce_stays_in_the_form(self) -> None:
+        a = challenge_page(nonce="aaaa", action="/a", to="/one")
+        b = challenge_page(nonce="bbbb", action="/b", to='/two?x="y')
+        assert _inline(a, "script") == _inline(b, "script")
+        assert "aaaa" not in _inline(a, "script")[0]
+        assert 'name="nonce" value="aaaa" id="camada-n"' in a
+        assert challenge_page_csp() == challenge_page_csp(16)
+        assert challenge_page_csp(12) != challenge_page_csp(16)
+        assert challenge_page_csp(99) == challenge_page_csp(32) and challenge_page_csp(0) == challenge_page_csp(1)
+
+    def test_same_policy_as_core(self) -> None:
+        # @camada/core challengePageCsp(16) (src/challenge/page.ts): the page is byte-for-byte core's, so the hashes match
+        assert challenge_page_csp() == (
+            "default-src 'none'; script-src 'sha256-ciEqEwbzJaoB3rni2OdS8TuYa+/yFdFMAkRscUn8z8k='; "
+            "style-src 'sha256-uTQFkKw4mZsBeb9oMeUmhuhVK7WwsKvYVU1JAzADMu0='; form-action 'self'; base-uri 'none'; frame-ancestors 'self'"
+        )

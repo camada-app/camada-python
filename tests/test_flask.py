@@ -6,6 +6,7 @@ import json
 import pytest
 from flask import Flask, Response
 
+from camada.challenge.page import challenge_page_csp
 from camada.engine import Camada
 from camada.flask import init_app, script_tag, serve_challenge, track
 
@@ -20,6 +21,12 @@ def app(default_engine: Camada) -> Flask:
     @app.get("/export")
     def export() -> Response:
         return serve_challenge() or Response("file")
+
+    @app.after_request
+    def site_csp(r: Response) -> Response:   # what Flask-Talisman does: a policy on every response
+        r.headers["Content-Security-Policy"] = "script-src 'self'"
+        r.headers["Content-Security-Policy-Report-Only"] = "default-src 'self'"
+        return r
 
     @app.get("/")
     def home() -> str:
@@ -62,6 +69,8 @@ def test_a_route_gates_itself_with_serve_challenge(app: Flask, default_engine: C
     html = {"x-forwarded-for": "172.16.0.9", "accept": "text/html", "sec-fetch-dest": "document"}
     r = c.get("/export", headers=html)
     assert r.status_code == 403 and r.headers["x-camada-challenge"] == "1" and r.headers["content-type"].startswith("text/html")
+    assert r.headers.getlist("content-security-policy") == [challenge_page_csp()]   # camada-all-y38o: the app's policy is replaced
+    assert "content-security-policy-report-only" not in r.headers
     assert default_engine.kit is not None
     c.set_cookie("_cch", default_engine.kit.issue("172.16.0.9", default_engine.now_ms()))
     assert c.get("/export", headers=html).get_data(as_text=True) == "file"

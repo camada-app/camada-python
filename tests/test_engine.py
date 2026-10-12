@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from camada.challenge.page import challenge_page_csp
 from camada.engine import Camada
 from camada.version import SDK_ID
 
@@ -108,9 +109,12 @@ class TestInlineBlocking:
         analyst.config["trusted_proxy"] = {"mode": "cidrs", "cidrs": ["104.16.0.0/13", "169.254.0.0/16"], "cloudflare": ["104.16.0.0/13"]}
         h = Host(driver, analyst, engines)
         via_cf = [("x-forwarded-for", f"{BLOCKED_IP}, 104.22.14.220, 169.254.1.1"), ("cf-connecting-ip", BLOCKED_IP)]
-        assert h("GET", "/", headers=via_cf).status == 403
+        # the App Engine shape: the peer is the local front end (loopback, a trusted hop under camada-all-yfc6 D1)
+        assert h("GET", "/", headers=via_cf, peer="127.0.0.1").status == 403
         direct = [("x-forwarded-for", "198.18.0.9, 169.254.1.1"), ("cf-connecting-ip", BLOCKED_IP)]   # forged header, no Cloudflare hop
-        assert h("GET", "/", headers=direct).status == 200
+        assert h("GET", "/", headers=direct, peer="127.0.0.1").status == 200
+        # a direct hit on the origin from an untrusted peer forging the whole Cloudflare chain: the peer is the client
+        assert h("GET", "/", headers=via_cf, peer="198.18.0.9").status == 200
 
     def test_fails_open_while_cold(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
         analyst.snapshot_down = True
@@ -330,6 +334,7 @@ class TestChallenge:
         r = h("GET", "/account?tab=1", headers=HTML, peer=CHALLENGED_IP)
         assert r.status == 403 and r.header("content-type") == "text/html; charset=utf-8"
         assert r.header("x-camada-challenge") == "1" and r.header("cache-control") == "no-store"
+        assert r.headers_named("content-security-policy") == [challenge_page_csp()]   # camada-all-y38o: its own policy
         assert 'action="/__camada/challenge"' in r.text and 'name="to" value="/account?tab=1"' in r.text
         assert h.seen == []
         (ev,) = h.events()
@@ -397,13 +402,16 @@ class TestChallenge:
     def test_serve_challenge_on_demand(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
         def gated(req: dict[str, Any]) -> tuple[int, list[tuple[str, str]], bytes]:
             answer = h.engine.serve_challenge(req["camada"])
-            if answer:
-                return answer.status, answer.headers, answer.body
+            if answer:   # the app (or its middleware) sets a site-wide policy on every response, this one included
+                app_csp = [("Content-Security-Policy", "script-src 'self'"), ("content-security-policy-report-only", "default-src 'self'")]
+                return answer.status, [*answer.headers, *app_csp], answer.body
             return 200, [], b"secret page"
 
         h = Host(driver, analyst, engines, handler=gated)
         r = h("GET", "/challenge-me", headers=HTML)
         assert r.status == 403 and "camada-f" in r.text
+        csp = [(k.lower(), v) for k, v in r.headers if k.lower().startswith("content-security-policy")]
+        assert csp == [("content-security-policy", challenge_page_csp())]   # the app's policies are replaced, not merged
         evs = h.events()
         assert len(evs) == 1 and evs[0]["blk"] == "challenge"   # one request, one event
         nonce = r.text.split('name="nonce" value="')[1].split('"')[0]

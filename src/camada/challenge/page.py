@@ -7,9 +7,18 @@
 #
 # The page carries its own SHA-256 rather than calling crypto.subtle: subtle is undefined on
 # non-secure origins (plain http on a LAN host), and 65k awaited digests would be slow anyway.
+#
+# CSP (camada-all-y38o, core's mwpo): the inline script and style depend on `bits` alone (the solver
+# reads the nonce from the form), so their hashes are fixed per difficulty and challenge_page_csp(bits)
+# can allow exactly them. The engine sends that policy with the page, and the adapters replace any
+# policy the app set on it, so a strict app CSP (django-csp, Flask-Talisman) cannot block the solver.
 from __future__ import annotations
 
-from .format import POW_BITS, escape_attr, escape_script
+import base64
+import hashlib
+from functools import lru_cache
+
+from .format import POW_BITS, escape_attr
 
 # FIPS 180-4 round constants (cube roots of the first 64 primes).
 _K = (
@@ -66,9 +75,32 @@ _STYLE = (
 )
 
 
+def _clamp(bits: int) -> int:
+    return min(32, max(1, bits))   # shift 32-bits must stay in range
+
+
+def _solver_script(bits: int) -> str:
+    """The page's one inline script. Depends on `bits` only: the nonce comes from the form."""
+    return (
+        _SOLVER + "\n"
+        "(function(){\n"
+        "  if(typeof window==='undefined'||window.__camadaAutostart===false)return;\n"
+        f"  var nonce=document.getElementById('camada-n').value,shift={32 - bits};\n"
+        "  function go(){\n"
+        "    for(var n=0;n<5000000;n++){\n"
+        "      if((__camadaSha256Words(nonce+'.'+n)[0]>>>shift)===0){\n"
+        "        document.getElementById('camada-s').value=String(n);\n"
+        "        document.getElementById('camada-f').submit();\n"
+        "        return}}\n"
+        "    document.getElementById('camada-msg').textContent='Could not complete the check. Please reload.'}\n"
+        "  setTimeout(go,30);\n"
+        "})();\n"
+    )
+
+
 def challenge_page(*, nonce: str, action: str, to: str, bits: int = POW_BITS) -> str:
     """`action` is the verify endpoint path; `to` has already been through safe_return_to."""
-    bits = min(32, max(1, bits))   # shift 32-bits must stay in range
+    bits = _clamp(bits)
     return (
         "<!doctype html>\n"
         '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">\n'
@@ -82,23 +114,29 @@ def challenge_page(*, nonce: str, action: str, to: str, bits: int = POW_BITS) ->
         '<div class="bar"><i></i></div>\n'
         "</main>\n"
         f'<form id="camada-f" method="POST" action="{escape_attr(action)}">\n'
-        f'<input type="hidden" name="nonce" value="{escape_attr(nonce)}">\n'
+        f'<input type="hidden" name="nonce" value="{escape_attr(nonce)}" id="camada-n">\n'
         '<input type="hidden" name="solution" id="camada-s">\n'
         f'<input type="hidden" name="to" value="{escape_attr(to)}">\n'
         "</form>\n"
-        "<script>" + _SOLVER + "\n"
-        "(function(){\n"
-        "  if(typeof window==='undefined'||window.__camadaAutostart===false)return;\n"
-        f"  var nonce={escape_script(nonce)},shift={32 - bits};\n"
-        "  function go(){\n"
-        "    for(var n=0;n<5000000;n++){\n"
-        "      if((__camadaSha256Words(nonce+'.'+n)[0]>>>shift)===0){\n"
-        "        document.getElementById('camada-s').value=String(n);\n"
-        "        document.getElementById('camada-f').submit();\n"
-        "        return}}\n"
-        "    document.getElementById('camada-msg').textContent='Could not complete the check. Please reload.'}\n"
-        "  setTimeout(go,30);\n"
-        "})();\n"
-        "</script>\n"
+        "<script>" + _solver_script(bits) + "</script>\n"
         "</body></html>"
     )
+
+
+def _sha256(text: str) -> str:
+    return "'sha256-" + base64.b64encode(hashlib.sha256(text.encode()).digest()).decode() + "'"
+
+
+@lru_cache(maxsize=32)
+def _csp(bits: int) -> str:
+    return (
+        f"default-src 'none'; script-src {_sha256(_solver_script(bits))}; style-src {_sha256(chr(10) + _STYLE)}; "
+        "form-action 'self'; base-uri 'none'; frame-ancestors 'self'"
+    )
+
+
+def challenge_page_csp(bits: int = POW_BITS) -> str:
+    """The Content-Security-Policy to send with challenge_page(bits=...): it allows only the page's own inline script
+    and style (by 'sha256-...' hash), a form post to the same origin, and nothing else. Send it as the response's only
+    CSP, removing any Content-Security-Policy or Content-Security-Policy-Report-Only the app set."""
+    return _csp(_clamp(bits))

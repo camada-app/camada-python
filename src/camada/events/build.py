@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from ..redact import scrub_query
+from ..redact import scrub_query, scrub_url
 
 HDRS: tuple[str, ...] = (
     "accept", "accept-language", "accept-encoding", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest",
@@ -77,7 +77,8 @@ def build_wire_event(
         "ct": h("content-type"), "cl": h("content-length"),
         "ua": h("user-agent"), "chua": h("sec-ch-ua"), "chmob": h("sec-ch-ua-mobile"), "chplat": h("sec-ch-ua-platform"),
         "acc": h("accept"), "lang": h("accept-language"), "fs": h("sec-fetch-site"), "fm": h("sec-fetch-mode"),
-        "fd": h("sec-fetch-dest"), "fu": h("sec-fetch-user"), "ref": h("referer"), "org": h("origin"),
+        # ref: the Referer's query and fragment are scrubbed like q (camada-all-ijsa), so the last page's token stays here
+        "fd": h("sec-fetch-dest"), "fu": h("sec-fetch-user"), "ref": scrub_url(h("referer")), "org": h("origin"),
         "xrw": h("x-requested-with"), "auth": auth_scheme(h("authorization")),   # scheme only, never the credential
         "hm": mask, "hn": hn, "hb": hb, "ck": len(cookie.split(";")) if cookie else 0,
         "hord": ",".join(names)[:2048],   # header order as this host reports it (true wire order under ASGI only)
