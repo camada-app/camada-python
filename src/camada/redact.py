@@ -38,6 +38,19 @@ def scrub_query(query: str | None) -> str:
     return lead + "&".join(out)
 
 
+def scrub_url(url: str | None) -> str | None:
+    """A URL (a Referer) with its query and fragment run through scrub_query (camada-all-ijsa); the scheme, host and
+    path are kept as they are. The path is left alone on purpose: it gets the same treatment as the request's own
+    path `p` (none). A same-origin Referer's path already shipped as `p` on that page's own event, and a cross-origin
+    one carries only the origin under the browsers' default Referrer-Policy."""
+    if url is None:
+        return None
+    head, hash_, frag = url.partition("#")
+    path, q, query = head.partition("?")
+    scrubbed = path + scrub_query(q + query) if q else head
+    return scrubbed + "#" + scrub_query(frag) if hash_ else scrubbed
+
+
 def body_shape(obj: Any) -> dict[str, int] | None:
     """Body shape only: field names and byte sizes, never values. One level deep."""
     if not isinstance(obj, dict):

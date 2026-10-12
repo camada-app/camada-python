@@ -12,6 +12,7 @@ from django.test import AsyncClient, Client
 from django.urls import path
 
 import camada
+from camada.challenge.page import challenge_page_csp
 from camada.engine import Camada
 
 from .fake_analyst import BLOCKED_IP, FakeAnalyst
@@ -35,7 +36,12 @@ async def ahome(request: HttpRequest) -> HttpResponse:
 def export(request: HttpRequest) -> HttpResponse:
     from camada.django import serve_challenge
 
-    return serve_challenge(request) or HttpResponse("file")
+    r = serve_challenge(request)
+    if r is None:
+        return HttpResponse("file")
+    r["Content-Security-Policy"] = "script-src 'self'"   # what a site-wide CSP middleware does to every response
+    r["Content-Security-Policy-Report-Only"] = "default-src 'self'"
+    return r
 
 
 urlpatterns = [path("", home), path("a/", ahome), path("items/<int:id>/", home), path("export/", export)]
@@ -111,6 +117,7 @@ def test_a_view_gates_itself_with_serve_challenge(engine: Camada) -> None:
     html = {"HTTP_X_FORWARDED_FOR": "172.16.0.9", "HTTP_ACCEPT": "text/html", "HTTP_SEC_FETCH_DEST": "document"}
     r = c.get("/export/", **html)
     assert r.status_code == 403 and r["x-camada-challenge"] == "1" and r["content-type"].startswith("text/html")
+    assert r["content-security-policy"] == challenge_page_csp() and not r.has_header("content-security-policy-report-only")   # y38o
     assert engine.kit is not None
     cch = engine.kit.issue("172.16.0.9", engine.now_ms())
     assert c.get("/export/", HTTP_COOKIE=f"_cch={cch}", **html).content == b"file"

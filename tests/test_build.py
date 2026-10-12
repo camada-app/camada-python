@@ -44,3 +44,12 @@ def test_event_without_headers_or_ip() -> None:
 def test_hord_and_query_are_capped() -> None:
     ev = build_wire_event(req([("x-" + str(i), "v") for i in range(1000)], query="?" + "a" * 600), tap="sdk-python", rid="r")
     assert len(ev["hord"]) == 2048 and len(ev["q"]) == 512
+
+
+def test_referer_ships_with_its_query_scrubbed() -> None:
+    # camada-all-ijsa: the request's own query was scrubbed, the Referer shipped verbatim
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTQyIn0.sig-sig-sig"
+    ev = build_wire_event(req([("Referer", f"https://x.test/reset-password?token={jwt}&code=4/0AbC")]), tap="sdk-python", rid="r")
+    assert ev["ref"] == "https://x.test/reset-password?token=~r&code=~r"
+    assert jwt not in str(ev) and "4/0AbC" not in str(ev)
+    assert build_wire_event(req([("Origin", "https://x.test")]), tap="sdk-python", rid="r")["ref"] is None
