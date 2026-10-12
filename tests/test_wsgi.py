@@ -9,7 +9,7 @@ import pytest
 
 from camada.engine import Camada
 from camada.ip import resolve_client_ip
-from camada.wsgi import CamadaWSGI, req_from_environ
+from camada.wsgi import CamadaWSGI, read_body, req_from_environ
 
 from .fake_analyst import FakeAnalyst
 
@@ -65,7 +65,7 @@ def test_a_body_over_the_cap_reaches_the_app_whole(engine: Camada) -> None:
         start_response("200 OK", [])
         return [b"ok"]
 
-    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/__camada/challenge", "wsgi.input": io.BytesIO(big)}
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/__camada/challenge", "wsgi.input": io.BytesIO(big), "wsgi.input_terminated": True}
     assert b"".join(CamadaWSGI(app, engine=engine)(environ, lambda *a: None)) == b"ok" and got == [big]
 
 
@@ -105,3 +105,52 @@ def test_path_info_latin1_bytes_read_back_as_utf8() -> None:
     environ = {"REQUEST_METHOD": "GET", "PATH_INFO": "/café".encode().decode("latin-1")}
     assert req_from_environ(environ).path == "/café"
     assert req_from_environ({"PATH_INFO": "/\udcff"}).path == "/\udcff"   # not latin-1-encodable: kept as is
+
+
+class SocketLike(io.RawIOBase):
+    """A raw socket's wsgi.input (werkzeug's dev server): the declared body, then a read that would
+    block forever waiting for bytes the client never sends — here it raises instead (camada-all-4sko)."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, b: Any) -> int:
+        if not self._body:
+            raise AssertionError("read past CONTENT_LENGTH: a socket stream would block here")
+        n = min(len(b), len(self._body))
+        b[:n], self._body = self._body[:n], self._body[n:]
+        return n
+
+
+def test_never_reads_past_content_length(engine: Camada, analyst: FakeAnalyst) -> None:
+    body = b'{"scr":"1x1"}'
+    environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/_cam/fp", "CONTENT_LENGTH": str(len(body)), "wsgi.input": io.BufferedReader(SocketLike(body)),
+               "REMOTE_ADDR": "172.16.0.9"}
+    statuses: list[str] = []
+    out = b"".join(CamadaWSGI(lambda e, sr: [], engine=engine)(environ, lambda s, h: statuses.append(s)))
+    assert statuses == ["204 No Content"] and out == b""
+    engine.queue.flush()  # type: ignore[union-attr]
+    assert any(e.get("sig") == 1 and e.get("scr") == "1x1" for e in analyst.all_events)
+
+
+def test_short_reads_are_filled_up_to_content_length() -> None:
+    class Trickle(SocketLike):
+        def readinto(self, b: Any) -> int:
+            return super().readinto(memoryview(b)[:1])   # one byte per read, as a socket may hand out
+
+    environ: dict[str, Any] = {"CONTENT_LENGTH": "5", "wsgi.input": Trickle(b"hello")}
+    assert read_body(environ, 100) == b"hello" and environ["wsgi.input"].read() == b"hello"
+
+
+def test_no_content_length_reads_nothing_unless_the_input_is_terminated() -> None:
+    stream = io.BufferedReader(SocketLike(b""))
+    environ: dict[str, Any] = {"wsgi.input": stream}
+    assert read_body(environ, 100) == b""   # PEP 3333: no CONTENT_LENGTH and no wsgi.input_terminated is an empty body
+    assert environ["wsgi.input"] is stream
+    chunked: dict[str, Any] = {"wsgi.input": io.BytesIO(b"abc"), "wsgi.input_terminated": True}
+    assert read_body(chunked, 100) == b"abc" and chunked["wsgi.input"].read() == b"abc"
+    big: dict[str, Any] = {"wsgi.input": io.BytesIO(b"x" * 10), "wsgi.input_terminated": True}
+    assert read_body(big, 4) is None and big["wsgi.input"].read() == b"x" * 10
