@@ -60,8 +60,9 @@ def _parse_cidrs(cidrs: list[str]) -> list[_Cidr]:
 
 def _untrusted_peer(sock: str | None, trusted: list[_Cidr]) -> bool:
     """The cidrs chain is [...xff, peer]: a peer that is neither loopback nor a trusted proxy did not come through one,
-    so it IS the client and XFF (anyone's to write on a direct hit) must not be read."""
-    return sock is not None and not _is_loopback(sock) and not any(_in_cidr(sock, t) for t in trusted)
+    so it IS the client and XFF (anyone's to write on a direct hit) must not be read. A peer that is not an ip (a unix
+    socket: a local proxy) is no network peer at all, as core sees it."""
+    return sock is not None and _valid_ip(sock) and not _is_loopback(sock) and not any(_in_cidr(sock, t) for t in trusted)
 
 
 def _parse_cidr(c: str) -> _Cidr | None:
@@ -115,9 +116,10 @@ def resolve_client_ip(peer: str | None, xff: str | None, cfg: TrustedProxy | Non
     the peer is not a trusted proxy, the request did not come through one and the peer IS the client; XFF is ignored,
     since anyone hitting the origin directly can write it. A loopback peer (127.0.0.0/8, ::1, ::ffff:127.x.x.x) counts
     as a trusted hop: it is a local front end or sidecar (App Engine's is always 127.0.0.1), and no remote client can
-    be one. Loopback is trusted only as the peer, never as an XFF entry. With no peer at all (`peer` None: a host that
-    exposes no socket) the walk runs over XFF alone: such a host trusts its network edge to have written XFF, and the
-    app must not be reachable around that edge. `hops` and `vercel` trust XFF by definition and ignore the peer."""
+    be one. Loopback is trusted only as the peer, never as an XFF entry. With no peer at all (`peer` None, or not an ip:
+    a host that exposes no socket, a unix socket) the walk runs over XFF alone: such a host trusts its network edge
+    to have written XFF, and the app must not be reachable around that edge. `hops` and `vercel` trust XFF by
+    definition and ignore the peer."""
     sock = peer[7:] if peer and peer[:7].lower() == "::ffff:" else (peer or None)   # dual-stack v4-mapped form
     if cfg and cfg.get("mode") == "cidrs" and cfg.get("cloudflare") and cf_ip:
         via_cf = _cloudflare_client(sock, xff, cfg, cf_ip)
@@ -161,7 +163,7 @@ def _cloudflare_client(sock: str | None, xff: str | None, cfg: TrustedProxy, cf_
     edge_set = set(cfg.get("cloudflare", []))
     own = _parse_cidrs([x for x in cfg.get("cidrs", []) if x not in edge_set])
     chain = _entries(xff)
-    if sock is not None and not _is_loopback(sock):
+    if sock is not None and _valid_ip(sock) and not _is_loopback(sock):
         chain.append(sock)   # a trusted peer: the CF edge itself, or one of the tenant's own hops
     for hop in reversed(chain):
         if any(_in_cidr(hop, t) for t in own):
