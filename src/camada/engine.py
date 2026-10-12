@@ -39,13 +39,16 @@ Headers = list[tuple[str, str]]
 _CSP_HEADERS = ("content-security-policy", "content-security-policy-report-only")
 
 
-def own_challenge_csp(headers: Headers) -> Headers:
-    """A challenge page the app returned (serve_challenge) keeps its own CSP: any policy the app or its middleware put
-    on that response (django-csp, Flask-Talisman) is dropped and the page's is set, or the solver would be blocked
-    (camada-all-y38o). Any other response comes back unchanged."""
+def is_challenge_page(headers: Headers) -> bool:
+    """A challenge page the app returned (serve_challenge): the x-camada-challenge marker on an HTML response. Its CSP
+    must be the page's own, or the solver is blocked (camada-all-y38o)."""
     lower = [(k.lower(), v) for k, v in headers]
-    if ("x-camada-challenge", "1") not in lower or not any(k == "content-type" and v.startswith("text/html") for k, v in lower):
-        return headers
+    return ("x-camada-challenge", "1") in lower and any(k == "content-type" and v.startswith("text/html") for k, v in lower)
+
+
+def with_challenge_csp(headers: Headers) -> Headers:
+    """The headers with any policy the app or its middleware put on them (django-csp, Flask-Talisman) dropped and the
+    challenge page's own set."""
     return [(k, v) for k, v in headers if k.lower() not in _CSP_HEADERS] + [("content-security-policy", challenge_page_csp())]
 
 

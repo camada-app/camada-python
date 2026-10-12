@@ -112,3 +112,18 @@ def test_peer_rule_unix_socket_listener_walks_and_unreadable_peer_is_none() -> N
         assert resolve_client_ip(req.peer, req.header("x-forwarded-for"), cfg) == "198.51.100.9"
     req = req_from_scope({**base, "client": ("/run/app.sock", 0)})
     assert resolve_client_ip(req.peer, req.header("x-forwarded-for"), cfg) is None
+
+
+def test_a_server_that_rewrites_the_peer_from_xff_hands_camada_the_forged_entry() -> None:
+    # Documents RA-3 (README "Proxies that rewrite the peer"): uvicorn's proxy headers (on by default) with
+    # FORWARDED_ALLOW_IPS='*' trusts every hop and sets scope["client"] to the leftmost X-Forwarded-For entry, which the
+    # client wrote. On Trialsights' chain camada then sees 6.6.6.6 as the socket peer: not a trusted proxy, so it is the
+    # client, and the real client (198.51.100.9) is lost. The fix is server-side: --no-proxy-headers, or
+    # forwarded-allow-ips restricted to the real proxy.
+    trialsights: Any = {"mode": "cidrs", "cidrs": ["172.64.0.0/13", "169.254.0.0/16"], "cloudflare": ["172.64.0.0/13"]}
+    xff = b"6.6.6.6, 198.51.100.9, 172.64.1.1, 169.254.1.1"
+    base = {"type": "http", "method": "GET", "path": "/", "headers": [(b"x-forwarded-for", xff)]}
+    rewritten = req_from_scope({**base, "client": ("6.6.6.6", 0)})
+    assert resolve_client_ip(rewritten.peer, rewritten.header("x-forwarded-for"), trialsights) == "6.6.6.6"
+    real = req_from_scope({**base, "client": ("127.0.0.1", 51234)})   # --no-proxy-headers: the real front end
+    assert resolve_client_ip(real.peer, real.header("x-forwarded-for"), trialsights) == "198.51.100.9"

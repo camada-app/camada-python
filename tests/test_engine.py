@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from camada.challenge.page import challenge_page_csp
-from camada.engine import Camada
+from camada.engine import Camada, is_challenge_page
 from camada.version import SDK_ID
 
 from .fake_analyst import (
@@ -377,6 +377,7 @@ class TestChallenge:
         nonce = page.split('name="nonce" value="')[1].split('"')[0]
         r = h("POST", "/__camada/challenge", body=f"nonce={nonce}&solution=1&to=%2F".encode(), peer=CHALLENGED_IP)
         assert r.status == 403 and r.header("set-cookie") is None and "camada-f" in r.text
+        assert r.headers_named("content-security-policy") == [challenge_page_csp()]   # the re-served page keeps its own policy
         forged = "f" * 32
         r = h("POST", "/__camada/challenge", body=f"nonce={forged}&solution={solve(forged)}&to=%2F".encode(), peer=CHALLENGED_IP)
         assert r.status == 403 and r.header("set-cookie") is None
@@ -445,3 +446,11 @@ class TestFailOpen:
         monkeypatch.setattr(h.engine, "_decide", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("sdk bug")))
         r = h("GET", "/", peer=BLOCKED_IP)
         assert r.status == 200 and r.body == b"hello"
+
+
+def test_is_challenge_page_needs_the_marker_and_an_html_body() -> None:
+    html = ("Content-Type", "text/html; charset=utf-8")
+    assert is_challenge_page([("X-Camada-Challenge", "1"), html])
+    assert not is_challenge_page([html])
+    assert not is_challenge_page([("x-camada-challenge", "1"), ("content-type", "application/json")])
+    assert not is_challenge_page([("x-camada-challenge", "0"), html])
