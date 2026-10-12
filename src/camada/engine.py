@@ -20,7 +20,7 @@ from typing import Any
 from . import constants as C
 from .beacon_js import BEACON_JS
 from .challenge.format import CHALLENGE_COOKIE, challenge_cookie, parse_form_body, safe_return_to, wants_html
-from .challenge.page import challenge_page
+from .challenge.page import challenge_page, challenge_page_csp
 from .challenge.verify import ChallengeKit, create_challenge
 from .config import TrustedProxy
 from .env import Env, resolve_env
@@ -35,6 +35,18 @@ from .transport import Transport
 from .version import SDK_ID
 
 Headers = list[tuple[str, str]]
+
+_CSP_HEADERS = ("content-security-policy", "content-security-policy-report-only")
+
+
+def own_challenge_csp(headers: Headers) -> Headers:
+    """A challenge page the app returned (serve_challenge) keeps its own CSP: any policy the app or its middleware put
+    on that response (django-csp, Flask-Talisman) is dropped and the page's is set, or the solver would be blocked
+    (camada-all-y38o). Any other response comes back unchanged."""
+    lower = [(k.lower(), v) for k, v in headers]
+    if ("x-camada-challenge", "1") not in lower or not any(k == "content-type" and v.startswith("text/html") for k, v in lower):
+        return headers
+    return [(k, v) for k, v in headers if k.lower() not in _CSP_HEADERS] + [("content-security-policy", challenge_page_csp())]
 
 
 @dataclass(slots=True)
@@ -290,7 +302,10 @@ class Camada:
     def _page(self, ip: str, to: str) -> Answer:
         assert self.kit is not None
         html = challenge_page(nonce=self.kit.nonce(ip, self.now_ms()), action=self.challenge_path, to=to)
-        headers: Headers = [("content-type", "text/html; charset=utf-8"), ("cache-control", "no-store"), ("x-camada-challenge", "1")]
+        headers: Headers = [
+            ("content-type", "text/html; charset=utf-8"), ("cache-control", "no-store"), ("x-camada-challenge", "1"),
+            ("content-security-policy", challenge_page_csp()),   # only its own inline solver and style (camada-all-y38o)
+        ]
         return Answer(403, headers, html.encode())
 
     def _serve_challenge(self, req: Req, ip: str, sid: str | None) -> Answer:
