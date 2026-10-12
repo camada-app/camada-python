@@ -11,7 +11,6 @@ from camada.challenge.format import (
     NONCE_HEX,
     challenge_cookie,
     escape_attr,
-    escape_script,
     parse_form_body,
     pow_ok,
     safe_return_to,
@@ -116,8 +115,9 @@ class TestHelpers:
         assert parse_form_body("") == {}
 
     def test_escaping(self) -> None:
+        import camada.challenge.format as fmt
+        assert not hasattr(fmt, "escape_script")   # the page inlines no value any more (RA-5)
         assert escape_attr('a<b>&"c\'') == "a&lt;b&gt;&amp;&quot;c&#39;"
-        assert escape_script("</script>") == '"\\u003c/script>"'
 
 
 class TestPage:

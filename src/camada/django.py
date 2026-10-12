@@ -12,7 +12,8 @@ from django.http import HttpRequest, HttpResponse, HttpResponseBase
 
 from . import constants as C
 from . import engine_for, get_default
-from .engine import INERT, Answer, Camada, Passed, own_challenge_csp
+from .challenge.page import challenge_page_csp
+from .engine import INERT, Answer, Camada, Passed, is_challenge_page
 from .guarded import log_rate_limited
 from .wsgi import req_from_environ
 
@@ -133,13 +134,11 @@ class CamadaMiddleware:
                     secure="; Secure" in p.set_cookie,
                 )
             if p.ctx is not None and p.ctx.get("challenged"):
-                headers = list(response.items())
-                owned = own_challenge_csp(headers)
-                if owned is not headers:
+                if is_challenge_page(list(response.items())):
                     for name in ("Content-Security-Policy", "Content-Security-Policy-Report-Only"):
                         if response.has_header(name):
                             del response[name]
-                    response["Content-Security-Policy"] = owned[-1][1]
+                    response["Content-Security-Policy"] = challenge_page_csp()
         except Exception as err:
             log_rate_limited(err)
         self._finish(request, p, getattr(response, "status_code", 200))

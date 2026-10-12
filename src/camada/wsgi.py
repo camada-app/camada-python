@@ -6,7 +6,7 @@ import io
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
-from .engine import Answer, Camada, Passed, Req, own_challenge_csp
+from .engine import Answer, Camada, Passed, Req, is_challenge_page, with_challenge_csp
 from .guarded import log_rate_limited
 
 StartResponse = Callable[..., Any]
@@ -152,7 +152,8 @@ class CamadaWSGI:
                 if p.set_cookie:
                     headers = [*headers, ("set-cookie", p.set_cookie)]
                 if p.ctx is not None and p.ctx.get("challenged"):
-                    headers = own_challenge_csp(headers)
+                    if is_challenge_page(headers):
+                        headers = with_challenge_csp(headers)
             except Exception as err:
                 log_rate_limited(err)
             return start_response(status, headers, exc_info) if exc_info is not None else start_response(status, headers)

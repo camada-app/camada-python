@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import hmac
-import json
 from urllib.parse import unquote
 
 CHALLENGE_COOKIE = "_cch"
@@ -93,11 +92,6 @@ def wants_html(accept: str | None, sec_fetch_dest: str | None) -> bool:
 
 def escape_attr(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
-
-
-def escape_script(s: str) -> str:
-    """Safe to drop inside an inline <script>: `<` is escaped so no value can close the element early."""
-    return json.dumps(s).replace("<", "\\u003c")
 
 
 def parse_form_body(body: str) -> dict[str, str]:

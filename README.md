@@ -91,6 +91,23 @@ app.add_middleware(CamadaMiddleware, engine=engine)      # init_app(app, engine=
    it. Behind Cloudflare, pick
    the Cloudflare option in project settings: `CF-Connecting-IP` is then read, but only when the hop in front
    of the client is one of Cloudflare's published edges, so a direct hit on your origin cannot forge it.
+
+   **Servers and middleware that rewrite the peer from `X-Forwarded-For`.** camada needs the real socket
+   peer. Some servers and middleware replace it with an entry from `X-Forwarded-For`. If they trust every
+   hop, that is the leftmost entry, which the client wrote. camada then takes that forged value as the
+   peer, and so as the client ip.
+   - **uvicorn**: proxy headers are on by default. With `FORWARDED_ALLOW_IPS='*'` (or
+     `--forwarded-allow-ips '*'`), `scope["client"]` becomes the leftmost `X-Forwarded-For` entry. Run
+     with `--no-proxy-headers`, or restrict `forwarded-allow-ips` to the address of the proxy in front
+     of you. Never use `*`. The default, `127.0.0.1`, trusts only a local proxy.
+   - **werkzeug `ProxyFix`** (Flask): apply it before `camada.flask.init_app(app)`, so camada wraps
+     outside it and reads `REMOTE_ADDR` before `ProxyFix` rewrites it. Your app still sees the rewritten
+     address.
+
+     ```python
+     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
+     camada.flask.init_app(app)   # last: camada is outermost
+     ```
 3. Enforces before anything else, beacon endpoints included: your ordered custom rules first (first
    match wins; they read ip, path, user-agent and request headers), then allow → block → challenge.
    A block answers `403 Forbidden` with `x-block-reason`, `x-block-version` and, when a rule
