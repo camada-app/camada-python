@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from camada.asgi import CamadaASGI
+from camada.asgi import CamadaASGI, req_from_scope
 from camada.engine import Camada
+from camada.ip import resolve_client_ip
 
 from .fake_analyst import FakeAnalyst
 from .hosts import AsgiDriver, Call
@@ -98,3 +99,16 @@ def test_cookies_split_over_several_fields_still_join_the_session(engine: Camada
     d(Call("GET", "/", headers=[("cookie", "a=1"), ("cookie", "_sfp=abc")]))
     engine.queue.flush()  # type: ignore[union-attr]
     assert [(e["sid"], e["ns"]) for e in analyst.all_events] == [("abc", 0), ("abc", 0)]
+
+
+def test_peer_rule_unix_socket_listener_walks_and_unreadable_peer_is_none() -> None:
+    # C6 v3 peer table: uvicorn --uds gives no client (or ""), so cidrs walks XFF alone; a client host that is not an
+    # ip could not be read, and the result is None, never the XFF walk.
+    cfg: Any = {"mode": "cidrs", "cidrs": ["172.64.0.0/13"]}
+    base = {"type": "http", "method": "GET", "path": "/", "headers": [(b"x-forwarded-for", b"198.51.100.9, 172.64.1.1")]}
+    for scope in ({**base}, {**base, "client": None}, {**base, "client": ("", 0)}):
+        req = req_from_scope(scope)
+        assert req.peer is None
+        assert resolve_client_ip(req.peer, req.header("x-forwarded-for"), cfg) == "198.51.100.9"
+    req = req_from_scope({**base, "client": ("/run/app.sock", 0)})
+    assert resolve_client_ip(req.peer, req.header("x-forwarded-for"), cfg) is None

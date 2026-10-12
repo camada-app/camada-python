@@ -27,7 +27,7 @@ def req_from_scope(scope: Scope) -> Req:
         query="?" + query if query else "",
         host=host,
         http_version=scope.get("http_version"),
-        peer=client[0] if client else None,
+        peer=(client[0] or None) if client else None,   # no client (a unix-socket listener) or "": no peer (C6)
         https=scope.get("scheme") == "https",
         headers=headers,
     )

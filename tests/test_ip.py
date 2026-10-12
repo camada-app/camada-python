@@ -139,4 +139,30 @@ def test_loopback_peer_is_a_trusted_hop_only_as_the_peer() -> None:
 def test_no_peer_keeps_the_plain_walk() -> None:
     assert resolve_client_ip(None, "1.2.3.4, 198.51.100.9, 172.64.1.1", CLOUDFLARE) == "198.51.100.9"
     assert resolve_client_ip(None, "172.64.1.1", CLOUDFLARE) is None
-    assert resolve_client_ip("unix:/run/app.sock", "198.51.100.9, 172.64.1.1", CLOUDFLARE) == "198.51.100.9"   # a local proxy
+    assert resolve_client_ip("", "1.2.3.4, 198.51.100.9, 172.64.1.1", CLOUDFLARE) == "198.51.100.9"   # "" is no peer
+
+
+def test_unreadable_peer_never_walks_and_gives_none() -> None:
+    # C6 v3: a non-empty peer that is not an ip after unmap could not be read; the result is None in every mode's
+    # fallback, and cidrs never walks XFF for it (it is not "no peer").
+    for peer in ("unix:/run/app.sock", "/run/app.sock", "@", "1.2.3.4:5", "fe80::1%eth0", "::ffff:zz", "1.2.3.4 ", "64:ff9b::198.51.100.9"):
+        assert resolve_client_ip(peer, "198.51.100.9, 172.64.1.1", CLOUDFLARE) is None, peer
+        assert resolve_client_ip(peer, None, None) is None, peer
+        assert resolve_client_ip(peer, "198.51.100.9", {"mode": "hops", "hops": 1}) == "198.51.100.9", peer
+        assert resolve_client_ip(peer, "198.51.100.9, 172.64.1.1", CLOUDFLARE, "198.51.100.9") is None, peer
+
+
+def test_v6_grammar_and_unmap_are_ours_not_the_std_lib() -> None:
+    hops1: TrustedProxy = {"mode": "hops", "hops": 1}
+    for bad in (":8:8:8", "2001:db8::1:", "::1.2.3.4", "::ffff:1.2.3.256", "0:0:0:0:0:ffff:1.2.3.4", ":::", "1:2:3:4:5:6:7:8:9"):
+        assert resolve_client_ip("10.0.0.1", bad, hops1) == "10.0.0.1", bad
+    assert resolve_client_ip("10.0.0.1", "::FFFF:203.0.113.5", hops1) == "203.0.113.5"
+    assert resolve_client_ip("10.0.0.1", "\u00a0203.0.113.5", hops1) == "10.0.0.1"   # NBSP is not OWS
+    assert resolve_client_ip("10.0.0.1", "\t203.0.113.5 ", hops1) == "203.0.113.5"
+    # ::ffff:7f00:1 is an ordinary v6 address, not loopback (Python 3.13 ipaddress says it is)
+    assert resolve_client_ip("::ffff:7f00:1", "198.51.100.9", CLOUDFLARE) == "::ffff:7f00:1"
+
+
+def test_cloudflare_header_is_never_read_behind_an_unreadable_peer() -> None:
+    assert resolve_client_ip("/run/app.sock", "198.51.100.9, 172.64.1.1", CLOUDFLARE, "198.51.100.9") is None
+    assert resolve_client_ip(None, "198.51.100.9, 172.64.1.1", CLOUDFLARE, "198.51.100.9") == "198.51.100.9"   # no peer walks

@@ -10,20 +10,51 @@ import json
 import re
 from typing import Any
 
-_NAME_RE = re.compile(r"(pass(word)?|tok(en)?|secret|key|api[-_]?key|auth|sess(ion)?|sig(nature)?|code|jwt|bearer|credential)", re.I)
-_JWT_RE = re.compile(r"^eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}")
-_HEX_RE = re.compile(r"^[a-f0-9]{32,}$", re.I)
-_B64_RE = re.compile(r"^[A-Za-z0-9+/_-]{40,}={0,2}$")
+# Exact patterns of C6 v3. Matching is ASCII-only (re.ASCII: no Unicode case folding, so U+017F never matches `s` and
+# U+212A never matches `k`) and whole-string tests use fullmatch (`$` would match before a trailing newline).
+_NAME_RE = re.compile(r"(pass(word)?|tok(en)?|secret|key|api[-_]?key|auth|sess(ion)?|sig(nature)?|code|jwt|bearer|credential)", re.I | re.A)
+_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}", re.A)   # prefix match: anything may follow
+_HEX_RE = re.compile(r"[a-fA-F0-9]{32,}", re.A)
+_B64_RE = re.compile(r"[A-Za-z0-9+/_-]{40,}={0,2}", re.A)
+_ESC_RE = re.compile(r"%([0-9a-fA-F]{2})", re.A)
+_NESTED_SPLIT_RE = re.compile(r"[?&]")
 
 REDACT_ALLOWLIST = ("plan", "role", "locale", "ab_variant")   # additions only, never narrowing
 
 
 def _suspect_value(v: str) -> bool:
-    return bool(_JWT_RE.match(v) or _HEX_RE.match(v) or _B64_RE.match(v))
+    return bool(_JWT_RE.match(v) or _HEX_RE.fullmatch(v) or _B64_RE.fullmatch(v))
+
+
+def _decode(s: str) -> str | None:
+    """Percent-decoding that never throws: each `%HH` (ASCII hex) becomes that byte as one char (Latin-1), any other
+    `%` stays, `+` stays. Up to 4 passes, so double (or triple) encoding cannot hide a name or a nested query; text
+    that still holds a `%HH` after 4 passes returns None, which the caller scrubs. Only ever used to TEST a part."""
+    for _ in range(4):
+        if not _ESC_RE.search(s):
+            return s
+        s = _ESC_RE.sub(lambda m: chr(int(m.group(1), 16)), s)
+    return None if _ESC_RE.search(s) else s
+
+
+def _cred_segment(seg: str) -> bool:
+    eq = seg.find("=")
+    return _suspect_value(seg) if eq == -1 else bool(_NAME_RE.search(seg[:eq])) or _suspect_value(seg[eq + 1 :])
+
+
+def _nested_cred(d: str) -> bool:
+    """A decoded value that carries a nested query (`?`, `&` or `=`) is a credential when any of its `[?&]`-separated
+    segments is one (C6 v3). `q=a=b` or `q=1' or '1'='1` is not; `next=/r?token=x` is. No further decoding."""
+    return any(c in d for c in "?&=") and any(_cred_segment(seg) for seg in _NESTED_SPLIT_RE.split(d))
 
 
 def scrub_query(query: str | None) -> str:
-    """Replaces credential-looking query values with ~r, preserving structure and order."""
+    """Replaces credential-looking query parts with ~r, preserving structure and order (C6 v3). The string is split on
+    `&`, never URL-parsed. Each part's name and value are percent-decoded (_decode) before testing; the output keeps
+    the raw text. `name=value` -> `name=~r` when the name looks like a credential, the value looks like one, or the
+    value holds a nested query with a credential segment (replaced whole, so payloads like `q=1' or '1'='1` stay
+    visible to the scorer). A bare part -> `~r` when it looks like a credential value or holds a credential segment.
+    Either half still encoded after 4 decode passes counts as a credential."""
     if not query or len(query) <= 1:
         return query or ""
     lead = "?" if query.startswith("?") else ""
@@ -31,10 +62,13 @@ def scrub_query(query: str | None) -> str:
     for p in (query[1:] if lead else query).split("&"):
         eq = p.find("=")
         if eq == -1:
-            out.append(p)
+            d = _decode(p)
+            out.append("~r" if d is None or _suspect_value(d) or _nested_cred(d) else p)
             continue
-        name, value = p[:eq], p[eq + 1 :]
-        out.append(f"{name}=~r" if _NAME_RE.search(name) or _suspect_value(value) else p)
+        name = p[:eq]
+        dn, dv = _decode(name), _decode(p[eq + 1 :])
+        hit = dn is None or dv is None or _NAME_RE.search(dn) or _suspect_value(dv) or _nested_cred(dv)
+        out.append(f"{name}=~r" if hit else p)
     return lead + "&".join(out)
 
 

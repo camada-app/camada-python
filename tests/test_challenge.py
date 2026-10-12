@@ -155,7 +155,7 @@ class TestPageCsp:
             (style,) = _inline(page, "style")
             assert f"script-src {_sha(script)};" in csp
             assert f"style-src {_sha(style)};" in csp
-            assert "default-src 'none'" in csp and "form-action 'self'" in csp and "unsafe" not in csp
+            assert "default-src 'none'" in csp and "form-action" not in csp and "unsafe" not in csp
 
     def test_fixed_per_bits_value_and_the_nonce_stays_in_the_form(self) -> None:
         a = challenge_page(nonce="aaaa", action="/a", to="/one")
@@ -171,5 +171,5 @@ class TestPageCsp:
         # @camada/core challengePageCsp(16) (src/challenge/page.ts): the page is byte-for-byte core's, so the hashes match
         assert challenge_page_csp() == (
             "default-src 'none'; script-src 'sha256-ciEqEwbzJaoB3rni2OdS8TuYa+/yFdFMAkRscUn8z8k='; "
-            "style-src 'sha256-uTQFkKw4mZsBeb9oMeUmhuhVK7WwsKvYVU1JAzADMu0='; form-action 'self'; base-uri 'none'; frame-ancestors 'self'"
+            "style-src 'sha256-uTQFkKw4mZsBeb9oMeUmhuhVK7WwsKvYVU1JAzADMu0='; base-uri 'none'; frame-ancestors 'self'"
         )

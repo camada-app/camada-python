@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from camada.engine import Camada
+from camada.ip import resolve_client_ip
 from camada.wsgi import CamadaWSGI, req_from_environ
 
 from .fake_analyst import FakeAnalyst
@@ -21,6 +22,22 @@ def test_environ_mapping() -> None:
     assert (req.method, req.path, req.query, req.host, req.http_version, req.peer, req.https) == ("PUT", "/a", "?x=1", "h", "1.0", "::ffff:1.2.3.4", True)
     assert ("x-forwarded-for", "5.6.7.8") in req.headers and ("content-type", "text/plain") in req.headers and ("content-length", "3") in req.headers
     assert req.header("x-forwarded-for") == "5.6.7.8"
+
+
+CIDRS: Any = {"mode": "cidrs", "cidrs": ["172.64.0.0/13"]}
+
+
+def test_peer_rule_unix_socket_listener_walks_and_unreadable_peer_is_none() -> None:
+    # C6 v3 peer table: REMOTE_ADDR "" or absent (gunicorn/uwsgi bound to a path) is no peer, so cidrs walks XFF alone;
+    # a non-empty REMOTE_ADDR that is not an ip could not be read, and the result is None, never the XFF walk.
+    base = {"REQUEST_METHOD": "GET", "PATH_INFO": "/", "HTTP_X_FORWARDED_FOR": "198.51.100.9, 172.64.1.1"}
+    for env in ({**base}, {**base, "REMOTE_ADDR": ""}):
+        req = req_from_environ(env)
+        assert req.peer is None
+        assert resolve_client_ip(req.peer, req.header("x-forwarded-for"), CIDRS) == "198.51.100.9"
+    for bad in ("/run/app.sock", "unix:/run/app.sock", "@", "1.2.3.4:5"):
+        req = req_from_environ({**base, "REMOTE_ADDR": bad})
+        assert resolve_client_ip(req.peer, req.header("x-forwarded-for"), CIDRS) is None, bad
 
 
 def test_a_body_camada_read_is_put_back_for_the_app(engine: Camada, analyst: FakeAnalyst) -> None:

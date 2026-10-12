@@ -42,7 +42,7 @@ def test_event_without_headers_or_ip() -> None:
 
 
 def test_hord_and_query_are_capped() -> None:
-    ev = build_wire_event(req([("x-" + str(i), "v") for i in range(1000)], query="?" + "a" * 600), tap="sdk-python", rid="r")
+    ev = build_wire_event(req([("x-" + str(i), "v") for i in range(1000)], query="?" + "a=1&" * 150), tap="sdk-python", rid="r")
     assert len(ev["hord"]) == 2048 and len(ev["q"]) == 512
 
 
