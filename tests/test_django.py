@@ -72,6 +72,7 @@ def events(e: Camada) -> list[dict[str, object]]:
 def test_blocks_before_the_view_and_ships_the_event(engine: Camada) -> None:
     r = Client().get("/", HTTP_X_FORWARDED_FOR=BLOCKED_IP)
     assert r.status_code == 403 and r["x-block-reason"] == "ip4" and r.content == b"Forbidden"
+    assert r["cache-control"] == "no-store"
     (ev,) = events(engine)
     assert ev["tap"] == "sdk-python" and ev["st"] == 403 and ev["blk"] == "ip4"
 

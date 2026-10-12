@@ -46,20 +46,43 @@ def req_from_environ(environ: dict[str, Any]) -> Req:
 
 def read_body(environ: dict[str, Any], limit: int) -> bytes | None:
     """At most `limit` bytes, or None when the declared or actual size exceeds it. Whatever was
-    read is put back so an app the request falls through to still sees its whole body."""
-    try:
-        declared = int(environ.get("CONTENT_LENGTH") or 0)
-    except ValueError:
-        declared = 0
-    if declared > limit:
-        return None
+    read is put back so an app the request falls through to still sees its whole body.
+
+    Never reads past CONTENT_LENGTH (PEP 3333): a server may hand over the raw socket (werkzeug's
+    dev server does), where one byte more blocks until the client gives up (camada-all-4sko).
+    Without CONTENT_LENGTH the body is empty unless the server sets wsgi.input_terminated."""
     stream = environ.get("wsgi.input")
-    data = stream.read(limit + 1) if stream is not None else b""
+    raw = environ.get("CONTENT_LENGTH")
+    if raw:
+        try:
+            declared = int(raw)
+        except ValueError:
+            declared = 0
+        if declared > limit:
+            return None
+        want = max(declared, 0)
+    else:
+        want = limit + 1 if environ.get("wsgi.input_terminated") else 0
+    if stream is None or not want:
+        return b""   # nothing read: the app keeps its stream as the server handed it
+    data = _read_up_to(stream, want)
     if len(data) > limit:
         environ["wsgi.input"] = io.BufferedReader(_Chained(data, stream))   # over the cap: the prefix, then the unread rest
         return None
     environ["wsgi.input"] = io.BytesIO(data)
     return data
+
+
+def _read_up_to(stream: Any, n: int) -> bytes:
+    """n bytes, or fewer at EOF: a raw stream may return short reads."""
+    parts: list[bytes] = []
+    while n > 0:
+        chunk = stream.read(n)
+        if not chunk:
+            break
+        parts.append(chunk)
+        n -= len(chunk)
+    return b"".join(parts)
 
 
 class _Chained(io.RawIOBase):

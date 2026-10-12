@@ -200,7 +200,10 @@ class Camada:
         # custom rules read the user agent and the request headers (§D3).
         v = self.snap.verdict(MatchInput(ip=ip, path=req.path, ua=req.header("user-agent"), header=req.header))
         if v.block:
-            headers: Headers = [("content-type", "text/plain"), ("x-block-reason", v.reason or ""), ("x-block-version", v.version or "")]
+            headers: Headers = [
+                ("content-type", "text/plain"), ("cache-control", "no-store"),   # per-visitor: no shared cache keeps it (8lp6)
+                ("x-block-reason", v.reason or ""), ("x-block-version", v.version or ""),
+            ]
             if v.rule:
                 headers.append(("x-block-rule", v.rule))   # a custom rule blocked: name it, so the customer knows which row to edit
             ev = self._event(req, str(uuid.uuid4()), None, False, ip)
