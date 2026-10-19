@@ -36,3 +36,8 @@ def test_canon_is_idempotent() -> None:
     for raw, _ in CASES:
         c = canon_path(raw)
         assert canon_path(c) == c
+
+
+def test_raw_control_chars_are_percent_encoded_lower_case_in_the_raw_form() -> None:
+    assert path_forms("/a\nb\x00\x7f") == ("/a%0ab%00%7f", "/a%0ab%00%7f", "/a%0ab%00%7f")
+    assert path_forms("/api/v2/dump\n")[0] == "/api/v2/dump%0a"

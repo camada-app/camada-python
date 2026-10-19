@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..ipparse import Words
-from .paths import PathForms, canon_path, dir_key, path_hit, path_pred
+from .paths import PathForms, canon_path, dir_key, over_cap, path_hit, path_pred
 
 Bits = memoryview   # a uint32 view: memoryview.cast('I')
 
@@ -209,6 +209,8 @@ def _js_to_re(pattern: str) -> str:
 
 # ---------- custom rules (v5) ----------
 
+_CTL = re.compile(r"[\x00-\x1f\x7f]")
+
 
 def _field_value(f: str, r: RuleRequest) -> str | None:
     """The string one condition reads, or None when this request cannot answer the field.
@@ -236,7 +238,7 @@ def _compile_cond(c: dict[str, Any], sets: list[tuple[Bits, Bits]], deny: bool =
     f, op = str(c.get("f", "")), str(c.get("op", ""))
     if f == "path":   # every path op reads the canonical forms, never _field_value
         pv = c.get("v")
-        pred = path_pred(op, [str(x) for x in pv] if isinstance(pv, list) else [str(pv)], compile_path_regex)
+        pred = path_pred(op, [str(x) for x in pv] if isinstance(pv, list) else [str(pv)], compile_path_regex, deny)
         return lambda r: path_hit(pred, r.paths, deny)
     negate = op in ("is_not", "not_in")
     # A header condition reads the request through the caller's getter. The name is lower-cased
@@ -277,9 +279,16 @@ def _compile_cond(c: dict[str, Any], sets: list[tuple[Bits, Bits]], deny: bool =
     if op == "matches":
         rx = compile_regex(values[0])
 
+        strip = f in ("ua", "header")
+
         def matches(r: RuleRequest) -> bool:
             v = read(r)
-            return v is not None and rx is not None and rx.search(v) is not None
+            if v is None or rx is None:
+                return False
+            if strip:
+                v = _CTL.sub("", v)   # regex-cap-sdk S2: engines disagree on control chars ($ before \n)
+            # regex-cap-sdk S1: never truncate (a needle pushed past the cap would fail a deny rule open)
+            return deny if over_cap(v) else rx.search(v) is not None
 
         return matches
     if op == "contains":

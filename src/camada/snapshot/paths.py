@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Collection, Sequence
 
+MAX_MATCH_INPUT = 2048   # regex-cap-sdk v1: the longest value a `matches` regex is run on, in UTF-16 code units
+
 PathForms = tuple[str, str, str]   # (raw with the query cut, lit, full)
 PathPred = Callable[[str], bool]
 
@@ -23,6 +25,20 @@ _HEXV = {c: int(chr(c), 16) for c in b"0123456789abcdefABCDEF"}
 # already canonical: the common case skips the byte walk
 _LONE_SURROGATE = re.compile("[\ud800-\udfff]")   # a str holds a surrogate code point only when it is unpaired
 _CANON = re.compile(r"(?:/(?!\.\.?(?:/|$))[a-z0-9\-._~!$&'()*+,=:@]+)+")
+
+
+_CTL_PATH = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def utf16_len(v: str) -> int:
+    """Length in UTF-16 code units (what edge's `v.length` counts): an astral code point is 2."""
+    if v.isascii():
+        return len(v)
+    return len(v) + sum(1 for ch in v if ord(ch) > 0xFFFF)
+
+
+def over_cap(v: str) -> bool:
+    return utf16_len(v) > MAX_MATCH_INPUT
 
 
 def _strip_query(raw: str | None) -> str:
@@ -81,7 +97,9 @@ def path_forms(raw: str | None) -> PathForms:
     p = _strip_query(raw)
     if _is_canon(p):
         return (p, p, p)
-    return (p, canon_path(p, False), canon_path(p, True))
+    lit, full = canon_path(p, False), canon_path(p, True)
+    # a decoded path (WSGI PATH_INFO) may carry a raw control character: spell it %xx as canon_path does
+    return (_CTL_PATH.sub(lambda m: f"%{ord(m.group()):02x}", p), lit, full)
 
 
 def _dir(p: str) -> str:
@@ -111,12 +129,15 @@ def path_hit(pred: PathPred, forms: PathForms, deny: bool) -> bool:
     return pred(forms[1]) and pred(forms[2])
 
 
-def path_pred(op: str, values: Sequence[str], compile_regex: Callable[[str], re.Pattern[str] | None]) -> PathPred:
+def path_pred(
+    op: str, values: Sequence[str], compile_regex: Callable[[str], re.Pattern[str] | None], deny: bool = True
+) -> PathPred:
     """One path condition -> a predicate over a single path form. `compile_regex` is the caller's
-    JS-regex translation, already case-insensitive."""
+    JS-regex translation, already case-insensitive. A `matches` form over MAX_MATCH_INPUT never runs
+    the regex: it answers `deny` (a hit for block/challenge/warn, a miss for skip)."""
     if op == "matches":
         rx = compile_regex(values[0])
-        return lambda p: rx is not None and rx.search(p) is not None
+        return lambda p: rx is not None and (deny if over_cap(p) else rx.search(p) is not None)
     if op == "starts_with":
         v = values[0]
         key = dir_key(v) if v.endswith("/") else canon_path(v)
