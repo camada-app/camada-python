@@ -285,10 +285,17 @@ def _compile_cond(c: dict[str, Any], sets: list[tuple[Bits, Bits]], deny: bool =
             v = read(r)
             if v is None or rx is None:
                 return False
-            if strip:
-                v = _CTL.sub("", v)   # regex-cap-sdk S2: engines disagree on control chars ($ before \n)
             # regex-cap-sdk S1: never truncate (a needle pushed past the cap would fail a deny rule open)
-            return deny if over_cap(v) else rx.search(v) is not None
+            def f(s: str) -> bool:
+                return deny if over_cap(s) else rx.search(s) is not None
+
+            if not strip:
+                return f(v)
+            stripped, n = _CTL.subn("", v)   # one scan (S5): engines disagree on control chars ($ before \n)
+            if n == 0:
+                return f(v)
+            # S5: control chars never widen a skip and never neuter a deny regex
+            return deny and (f(v) or f(stripped))
 
         return matches
     if op == "contains":

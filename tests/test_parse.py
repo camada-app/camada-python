@@ -116,7 +116,7 @@ def test_js_regex_spellings_are_translated() -> None:
     assert m.match(MatchInput(path="/api/v2/dump")).rule == "ver"
     assert m.match(MatchInput(path="/api/v٣/dump")).rule is None   # \d is ASCII, as JS reads it
     m2 = rules_snapshot([{"id": "any", "action": "block", "conds": [{"f": "ua", "op": "matches", "v": r"^a[^]b$"}]}])
-    assert m2.match(MatchInput(ua="a\nb")).rule is None   # the control char is stripped first (regex-cap-sdk S2): "ab"
+    assert m2.match(MatchInput(ua="a\nb")).rule == "any"   # v3 (S5): a deny also tests the raw value, where [^] eats the LF
     assert m2.match(MatchInput(ua="aXb")).rule == "any"
     assert m2.match(MatchInput(ua="ab")).rule is None
     rx = compile_regex(r"^a[^]b\cJ$")
@@ -191,9 +191,9 @@ def test_control_chars_are_deleted_from_ua_and_header_before_matches() -> None:
     assert m.match(MatchInput(ua="Scrapy\t/2.11")).rule == "ua"
     assert m.match(MatchInput(ua="Scr\x00apy/2\x7f.1")).rule == "ua"
     assert m.match(MatchInput(header=lambda n: "1\x7f.2\n" if n == "x-v" else None)).rule == "h"
-    # strip before measuring: 2048 units plus a TAB is at the cap
+    # v3 (S5): raw 2049 is over the cap, so a deny rule hits on the raw value even though stripped is at the cap
     m2 = _ua_rules("block")
-    assert m2.match(MatchInput(ua="a" * 2048 + "\t")).rule is None
+    assert m2.match(MatchInput(ua="a" * 2048 + "\t")).rule == "r"
     # contains keeps reading the raw value
     m3 = rules_snapshot([{"id": "c", "action": "block", "conds": [{"f": "ua", "op": "contains", "v": "curl/"}]}])
     assert m3.match(MatchInput(ua="cu\x00rl/8")).rule is None
@@ -221,3 +221,60 @@ def test_path_matches_cap_deny_and_skip() -> None:
     assert m.match(MatchInput(path="/" + "é" * 400)).rule == "b"                # lit/full are 2401 units
     assert m.match(MatchInput(path="/api/v2/dump\n")).rule is None              # raw LF becomes %0a
     assert m.match(MatchInput(path="/api/v2/dump%0A")).rule is None
+
+
+# ---------- regex-cap-sdk v3 S5: two-value rule for control characters ----------
+
+
+def _skip_then_block(skip_pat: str, field: str = "ua", name: str | None = None) -> Matcher:
+    cond: dict[str, Any] = {"f": field, "op": "matches", "v": skip_pat}
+    if name:
+        cond["name"] = name
+    other: dict[str, Any] = {"f": field, "op": "contains", "v": "x"}
+    if name:
+        other["name"] = name
+    return rules_snapshot([
+        {"id": "s", "action": "skip", "conds": [cond]},
+        {"id": "b", "action": "block", "conds": [other]},
+    ])
+
+
+def test_s5_deny_pattern_targeting_a_control_char_hits_the_raw_value() -> None:
+    assert _ua_rules("block", r"\t").match(MatchInput(ua="a\tb")).rule == "r"
+    h = rules_snapshot([{"id": "h", "action": "block", "conds": [{"f": "header", "op": "matches", "name": "x-v", "v": r"\t"}]}])
+    assert h.match(MatchInput(header=lambda n: "a\tb" if n == "x-v" else None)).rule == "h"
+
+
+def test_s5_deny_still_meets_the_stripped_value() -> None:
+    assert _ua_rules("block", "sqlmap").match(MatchInput(ua="sql\tmap")).rule == "r"
+    h = rules_snapshot([{"id": "h", "action": "block", "conds": [{"f": "header", "op": "matches", "name": "x-v", "v": "sqlmap"}]}])
+    assert h.match(MatchInput(header=lambda n: "sql\tmap" if n == "x-v" else None)).rule == "h"
+
+
+def test_s5_skip_is_a_miss_with_control_chars_and_a_hit_when_clean() -> None:
+    m = _skip_then_block("^partner-[a-z]+$")
+    assert m.match(MatchInput(ua="x partner-acme")).rule == "b"
+    assert _skip_then_block("^partner-[a-z]+x?$").match(MatchInput(ua="partner-acme\n")).rule is None
+    ms = rules_snapshot([
+        {"id": "s", "action": "skip", "conds": [{"f": "ua", "op": "matches", "v": "^partner-[a-z]+$"}]},
+        {"id": "b", "action": "block", "conds": [{"f": "ua", "op": "contains", "v": "partner"}]},
+    ])
+    assert ms.match(MatchInput(ua="partner-acme")).rule == "s"
+    assert ms.match(MatchInput(ua="partner-acme\n")).rule == "b"
+    hs = rules_snapshot([
+        {"id": "s", "action": "skip", "conds": [{"f": "header", "op": "matches", "name": "x-p", "v": "^partner-[a-z]+$"}]},
+        {"id": "b", "action": "block", "conds": [{"f": "header", "op": "contains", "name": "x-p", "v": "partner"}]},
+    ])
+    assert hs.match(MatchInput(header=lambda n: "partner-acme" if n == "x-p" else None)).rule == "s"
+    assert hs.match(MatchInput(header=lambda n: "partner-acme\n" if n == "x-p" else None)).rule == "b"
+
+
+def test_s5_raw_over_cap_but_stripped_under_cap_deny_hits_skip_misses() -> None:
+    v = "a" * 2048 + "\t"
+    assert _ua_rules("block", "^b").match(MatchInput(ua=v)).rule == "r"
+    ms = rules_snapshot([
+        {"id": "s", "action": "skip", "conds": [{"f": "ua", "op": "matches", "v": "^a+$"}]},
+        {"id": "b", "action": "block", "conds": [{"f": "ua", "op": "contains", "v": "a"}]},
+    ])
+    assert ms.match(MatchInput(ua="a" * 2048)).rule == "s"
+    assert ms.match(MatchInput(ua=v)).rule == "b"
