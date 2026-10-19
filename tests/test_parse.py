@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from camada.snapshot.match import Matcher, MatchInput
-from camada.snapshot.parse import parse_snapshot
+from camada.snapshot.parse import compile_regex, parse_snapshot
 
 from .conftest import read_bin, read_json
 
@@ -115,9 +115,12 @@ def test_js_regex_spellings_are_translated() -> None:
     m = rules_snapshot([{"id": "ver", "action": "block", "conds": [{"f": "path", "op": "matches", "v": r"^/api/(?<ver>v\d+)/"}]}])
     assert m.match(MatchInput(path="/api/v2/dump")).rule == "ver"
     assert m.match(MatchInput(path="/api/v٣/dump")).rule is None   # \d is ASCII, as JS reads it
-    m2 = rules_snapshot([{"id": "any", "action": "block", "conds": [{"f": "ua", "op": "matches", "v": r"^a[^]b\cJ$"}]}])
-    assert m2.match(MatchInput(ua="a\nb\n")).rule == "any"
+    m2 = rules_snapshot([{"id": "any", "action": "block", "conds": [{"f": "ua", "op": "matches", "v": r"^a[^]b$"}]}])
+    assert m2.match(MatchInput(ua="a\nb")).rule is None   # the control char is stripped first (regex-cap-sdk S2): "ab"
+    assert m2.match(MatchInput(ua="aXb")).rule == "any"
     assert m2.match(MatchInput(ua="ab")).rule is None
+    rx = compile_regex(r"^a[^]b\cJ$")
+    assert rx is not None and rx.search("a\nb\n") is not None
 
 
 def test_one_matcher_serves_concurrent_requests_without_crosstalk() -> None:
@@ -147,3 +150,74 @@ def test_one_matcher_serves_concurrent_requests_without_crosstalk() -> None:
     for t in ts:
         t.join()
     assert wrong == [0, 0]
+
+
+# ---------- regex-cap-sdk v1: the `matches` input cap and control-character rules ----------
+
+def _ua_rules(action: str, pattern: str = "^x") -> Matcher:
+    return rules_snapshot([{"id": "r", "action": action, "conds": [{"f": "ua", "op": "matches", "v": pattern}]}])
+
+
+@pytest.mark.parametrize("action", ["block", "challenge", "warn"])
+def test_matches_over_cap_is_a_hit_for_deny_rules(action: str) -> None:
+    m = _ua_rules(action)
+    assert m.match(MatchInput(ua="a" * 2048)).rule is None        # at the cap: the regex runs and misses
+    assert m.match(MatchInput(ua="a" * 2049)).rule == "r"         # over: never truncated, never run
+
+
+def test_matches_over_cap_is_a_miss_for_skip_rules() -> None:
+    m = rules_snapshot([
+        {"id": "s", "action": "skip", "conds": [{"f": "ua", "op": "matches", "v": "^x"}]},
+        {"id": "b", "action": "block", "conds": [{"f": "ua", "op": "contains", "v": "x"}]},
+    ])
+    assert m.match(MatchInput(ua="x" * 2048)).rule == "s"
+    assert m.match(MatchInput(ua="x" * 2049)).rule == "b"
+
+
+def test_cap_unit_is_utf16_code_units() -> None:
+    m = _ua_rules("block")
+    assert m.match(MatchInput(ua="é" * 2048)).rule is None        # bytes would be 4096
+    assert m.match(MatchInput(ua="😀" * 1024)).rule is None       # 2048 units
+    assert m.match(MatchInput(ua="😀" * 1025)).rule == "r"        # 2050 units, 1025 code points
+    assert m.match(MatchInput(ua="\ud800" * 2048)).rule is None   # a lone surrogate counts 1
+    assert m.match(MatchInput(ua="\ud800" * 2049)).rule == "r"
+
+
+def test_control_chars_are_deleted_from_ua_and_header_before_matches() -> None:
+    m = rules_snapshot([
+        {"id": "ua", "action": "warn", "conds": [{"f": "ua", "op": "matches", "v": "Scrapy/[0-9]"}]},
+        {"id": "h", "action": "block", "conds": [{"f": "header", "op": "matches", "name": "x-v", "v": "^1\\.2$"}]},
+    ])
+    assert m.match(MatchInput(ua="Scrapy\t/2.11")).rule == "ua"
+    assert m.match(MatchInput(ua="Scr\x00apy/2\x7f.1")).rule == "ua"
+    assert m.match(MatchInput(header=lambda n: "1\x7f.2\n" if n == "x-v" else None)).rule == "h"
+    # strip before measuring: 2048 units plus a TAB is at the cap
+    m2 = _ua_rules("block")
+    assert m2.match(MatchInput(ua="a" * 2048 + "\t")).rule is None
+    # contains keeps reading the raw value
+    m3 = rules_snapshot([{"id": "c", "action": "block", "conds": [{"f": "ua", "op": "contains", "v": "curl/"}]}])
+    assert m3.match(MatchInput(ua="cu\x00rl/8")).rule is None
+
+
+def test_present_ua_that_strips_to_empty_still_runs_the_regex() -> None:
+    m = _ua_rules("block", "^$")
+    assert m.match(MatchInput(ua="\t\n")).rule == "r"
+    assert m.match(MatchInput(ua="")).rule is None                 # absent stays absent
+
+
+def test_path_matches_cap_deny_and_skip() -> None:
+    m = rules_snapshot([
+        {"id": "s", "action": "skip", "conds": [{"f": "path", "op": "matches", "v": "^/static-mirror/"}]},
+        {"id": "b", "action": "block", "conds": [{"f": "path", "op": "matches", "v": "^/api/v[0-9]+/dump$"}]},
+    ])
+    assert m.match(MatchInput(path="/static-mirror/" + "a" * 2033)).rule == "s"
+    assert m.match(MatchInput(path="/static-mirror/" + "a" * 2034)).rule == "b"
+    assert m.match(MatchInput(path="/x/" + "a" * 2045)).rule is None
+    assert m.match(MatchInput(path="/x/" + "a" * 2046)).rule == "b"
+    assert m.match(MatchInput(path="/x?" + "q" * 3000)).rule is None            # after the query cut
+    assert m.match(MatchInput(path="/" + "%61" * 700)).rule == "b"              # raw form over the cap
+    assert m.match(MatchInput(path="/static-mirror/" + "%61" * 700)).rule == "s"  # skip ignores raw
+    assert m.match(MatchInput(path="/static-mirror/" + "./" * 1100 + "x")).rule == "b"
+    assert m.match(MatchInput(path="/" + "é" * 400)).rule == "b"                # lit/full are 2401 units
+    assert m.match(MatchInput(path="/api/v2/dump\n")).rule is None              # raw LF becomes %0a
+    assert m.match(MatchInput(path="/api/v2/dump%0A")).rule is None
