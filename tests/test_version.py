@@ -3,8 +3,8 @@
 import re
 from importlib.metadata import version
 
-# edge-analyst src/freshness.js SDK_RE: anything else is silently dropped from sdk_versions.
-ANALYST_SDK_RE = re.compile(r"^@?[a-z0-9._-]+(/[a-z0-9._-]+)?/\d+\.\d+\.\d+[a-z0-9.-]*$", re.I)
+# edge-analyst src/freshness.js sdkId (SDK_RE, exact-case SDK_NAMES): anything else is dropped.
+ANALYST_SDK_RE = re.compile(r"^@camada/python/\d+\.\d+\.\d+[A-Za-z0-9.-]*$")
 
 
 def test_installed_metadata_matches_the_literal() -> None:
