@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.testclient import TestClient
 
-from camada.engine import Camada
+from camada.engine import NO_STORE_HEADERS, Camada
 from camada.fastapi import CamadaMiddleware, script_tag, serve_challenge, track
 
 from .fake_analyst import BLOCKED_IP, FakeAnalyst
@@ -70,8 +70,8 @@ def test_a_route_gates_itself_with_serve_challenge(client: TestClient, default_e
 def test_a_non_html_request_under_a_challenge_is_signalled(client: TestClient, default_engine: Camada, analyst: FakeAnalyst) -> None:
     r = client.get("/export", headers={"x-forwarded-for": "172.16.0.9", "accept": "application/json"})   # serve_challenge() runs inside the route
     assert r.status_code == 200 and r.text == "file"
-    assert r.headers["x-camada-challenge"] == "1" and r.headers["cache-control"] == "no-store"
-    for name in ("cache-control", "cdn-cache-control", "surrogate-control", "cloudflare-cdn-cache-control", "vercel-cdn-cache-control", "netlify-cdn-cache-control"):   # the app's CDN headers are overridden (camada-all-1zlg)
+    assert r.headers["x-camada-challenge"] == "1"
+    for name in NO_STORE_HEADERS:   # the app's CDN headers are overridden (camada-all-1zlg)
         assert r.headers.get_list(name) == ["no-store"]
     default_engine.queue.flush()  # type: ignore[union-attr]
     (ev,) = analyst.all_events
