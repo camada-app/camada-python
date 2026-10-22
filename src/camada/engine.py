@@ -52,6 +52,14 @@ def with_challenge_csp(headers: Headers) -> Headers:
     return [(k, v) for k, v in headers if k.lower() not in _CSP_HEADERS] + [("content-security-policy", challenge_page_csp())]
 
 
+def with_signal(headers: Headers) -> Headers:
+    """The headers of a signalled response: `x-camada-challenge: 1`, and `no-store` in place of any cache-control
+    the app set (the signal is per client, so no shared cache may keep the copy)."""
+    return [(k, v) for k, v in headers if k.lower() not in ("cache-control", "x-camada-challenge")] + [
+        ("cache-control", "no-store"), ("x-camada-challenge", "1"),
+    ]
+
+
 @dataclass(slots=True)
 class Req:
     """What an adapter hands the engine. Header names are lower-cased; the list keeps the order
@@ -219,12 +227,16 @@ class Camada:
         # A challenge needs a resolved client IP: the nonce and the _cch cookie are bound to it,
         # so without one a single solve would mint a cookie every unidentified client could
         # present. No ip -> no challenge (fail open), the same stance ip rules take.
+        signalled = False
         if self.challenge_on and ip:
             # The verify endpoint answers first: a challenged client must be able to reach it.
             if req.method == "POST" and req.path == self.challenge_path:
                 return self._verify(req, body, ip)
             if v.challenge and not self._challenge_passed(req, ip):
-                return self._serve_challenge(req, ip, sid=cookie_value(req.header("cookie"), C.SESSION_COOKIE))
+                # Only a page load can be challenged; anything else passes, signalled (camada-all-7cgs).
+                if wants_html(req.header("accept"), req.header("sec-fetch-dest")):
+                    return self._serve_challenge(req, ip, sid=cookie_value(req.header("cookie"), C.SESSION_COOKIE))
+                signalled = True
 
         if self._beacon_enabled():
             if req.method == "GET" and req.path == self.script_path:
@@ -244,6 +256,8 @@ class Camada:
             if secure:
                 set_cookie += "; Secure"
         ctx: dict[str, Any] = {"rid": rid, "sid": sid, "ip": ip, "_req": req, "_engine": self}
+        if signalled:
+            ctx["signalled"] = True
 
         cfg = self.snap.config or {}
         excluded = any(req.path.startswith(x) for x in cfg.get("exclude") or [])
@@ -255,9 +269,14 @@ class Camada:
             try:
                 # serve_challenge() may have answered from inside the app, and it already shipped
                 # the `blk: "challenge"` row — one request, one event.
-                if ctx.get("challenged") or excluded or not sampled:
+                if ctx.get("challenged"):
+                    return
+                # a signalled row ships whatever sample and exclude say, like the 403 row it replaces
+                if not ctx.get("signalled") and (excluded or not sampled):
                     return
                 ev = self._event(req, rid, sid, new_session, ip)
+                if ctx.get("signalled"):
+                    ev["chs"] = 1   # challenge signalled (contract §A3)
                 ev["ts"], ev["st"], ev["dur"] = ts0, status, int((time.monotonic() - t0) * 1000)
                 if req.route:
                     ev["rt"] = req.route
@@ -315,14 +334,9 @@ class Camada:
         return Answer(403, headers, html.encode())
 
     def _serve_challenge(self, req: Req, ip: str, sid: str | None) -> Answer:
-        """403 + the proof-of-work page (HTML navigations) or 403 JSON (everything else), plus the
-        `blk: "challenge"` event — a served challenge is reported like a block (contract §D2)."""
-        to = safe_return_to(req.path + req.query)
-        if wants_html(req.header("accept"), req.header("sec-fetch-dest")):
-            answer = self._page(ip, to)
-        else:
-            headers: Headers = [("content-type", "application/json"), ("cache-control", "no-store"), ("x-camada-challenge", "1")]
-            answer = Answer(403, headers, b'{"error":"challenge_required"}')
+        """403 + the proof-of-work page, plus the `blk: "challenge"` event — a served challenge is
+        reported like a block (contract §D2). Callers pass page loads only."""
+        answer = self._page(ip, safe_return_to(req.path + req.query))
         try:
             assert self.queue is not None
             ev = self._event(req, str(uuid.uuid4()), sid, False, ip)
@@ -353,14 +367,19 @@ class Camada:
 
     def serve_challenge(self, ctx: Mapping[str, Any] | None) -> Answer | None:
         """Serve the challenge for this request on demand — for a route the app wants to gate
-        itself. None when the client already holds a valid _cch (render your own page), or when
-        the client cannot be identified (fail open)."""
+        itself. None when the client already holds a valid _cch (render your own page), when the
+        client cannot be identified (fail open), or when it is not a page load: that request is
+        signalled instead (`x-camada-challenge: 1`, `chs: 1`) and the app renders."""
         try:
             if self.disabled or not self.kit or not ctx:
                 return None
             req: Req | None = ctx.get("_req")
             ip = ctx.get("ip")
             if req is None or not ip or self._challenge_passed(req, ip):
+                return None
+            if not wants_html(req.header("accept"), req.header("sec-fetch-dest")):
+                if isinstance(ctx, dict):
+                    ctx["signalled"] = True
                 return None
             if isinstance(ctx, dict):
                 ctx["challenged"] = True
