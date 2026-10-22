@@ -309,7 +309,9 @@ class Camada:
         if not isinstance(parsed, dict):
             return answer
         assert self.queue is not None
-        self.queue.push({**parsed, "sig": 1, "ip": ip, "tap": C.TAP})   # spread first: ip and tap are the server's word
+        row = {k: v for k, v in parsed.items() if k not in C.REQUEST_ROW_KEYS}
+        row.update(sig=1, ip=ip, tap=C.TAP)   # after the body: ip and tap are the server's word
+        self.queue.push(row)
         return answer
 
     def script_tag(self, ctx: Mapping[str, Any] | None) -> str:
