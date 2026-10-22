@@ -12,6 +12,9 @@ KILL_SWITCH_ENV = "CAMADA_DISABLED"
 SCRIPT_PATH = "/_cam/b.js"
 FP_PATH = "/_cam/fp"
 FP_MAX = 32 * 1024                 # matches the server's /fp cap: never accept what ingest will 413
+# Row keys only the SDK can attest (TLS/network facts, outcome, session, track()). A beacon body is the
+# visitor's, so these never ride a sig:1 row; the analyst joins them from the beacon's request row.
+REQUEST_ROW_KEYS = frozenset({"tlsx", "ja4", "asn", "cc", "sid", "ns", "st", "dur", "rt", "blk", "rl", "wrn", "chs", "ch", "et", "uid"})
 CHALLENGE_PATH = "/__camada/challenge"
 BODY_MAX = 4 * 1024                # the verify form is ~120 bytes; anything larger is not ours
 
