@@ -255,6 +255,15 @@ class TestBeacon:
         (row,) = h.events()
         assert row["sig"] == 1 and row["ip"] == "198.18.0.5" and row["tap"] == "sdk-python" and row["scr"] == "1x1" and row["rid"] == "r-1"
 
+    def test_strips_sdk_attested_keys_a_visitor_puts_in_the_beacon_body(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
+        h = Host(driver, analyst, engines)
+        forged = dict.fromkeys(["tlsx", "ja4", "asn", "cc", "sid", "ns", "st", "dur", "rt", "blk", "rl", "wrn", "chs", "ch", "et", "uid"], "forged")
+        body = json.dumps({"rid": "r-1", "tz": "UTC", **forged}).encode()
+        assert h("POST", "/_cam/fp", headers=[("content-type", "application/json")], body=body).status == 204
+        (row,) = h.events()
+        assert row["sig"] == 1 and row["rid"] == "r-1" and row["tz"] == "UTC" and row["tap"] == "sdk-python"
+        assert not forged.keys() & row.keys()
+
     def test_drops_junk_bodies_instead_of_shipping_them(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
         h = Host(driver, analyst, engines)
         for junk in (b"not json", b"[1,2]", b"42", b""):
