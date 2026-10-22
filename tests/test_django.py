@@ -38,7 +38,7 @@ def export(request: HttpRequest) -> HttpResponse:
 
     r = serve_challenge(request)
     if r is None:
-        return HttpResponse("file")
+        return HttpResponse("file", headers={"CDN-Cache-Control": "public, max-age=60", "Surrogate-Control": "max-age=60"})
     r["Content-Security-Policy"] = "script-src 'self'"   # what a site-wide CSP middleware does to every response
     r["Content-Security-Policy-Report-Only"] = "default-src 'self'"
     return r
@@ -121,7 +121,8 @@ def test_a_view_gates_itself_with_serve_challenge(engine: Camada) -> None:
     assert r["content-security-policy"] == challenge_page_csp() and not r.has_header("content-security-policy-report-only")   # y38o
     assert engine.kit is not None
     cch = engine.kit.issue("172.16.0.9", engine.now_ms())
-    assert c.get("/export/", HTTP_COOKIE=f"_cch={cch}", **html).content == b"file"
+    ok = c.get("/export/", HTTP_COOKIE=f"_cch={cch}", **html)
+    assert ok.content == b"file" and ok["cdn-cache-control"] == "public, max-age=60" and ok["surrogate-control"] == "max-age=60"   # not signalled: untouched
     assert [(e["st"], e.get("blk")) for e in events(engine)] == [(403, "challenge"), (200, None)]
 
 
@@ -129,5 +130,7 @@ def test_a_non_html_request_under_a_challenge_is_signalled(engine: Camada) -> No
     r = Client().get("/export/", HTTP_X_FORWARDED_FOR="172.16.0.9", HTTP_ACCEPT="application/json")   # serve_challenge() runs inside the view
     assert r.status_code == 200 and r.content == b"file"
     assert r["x-camada-challenge"] == "1" and r["cache-control"] == "no-store"
+    for name in ("cache-control", "cdn-cache-control", "surrogate-control", "cloudflare-cdn-cache-control", "vercel-cdn-cache-control", "netlify-cdn-cache-control"):   # the app's CDN headers are overridden (camada-all-1zlg)
+        assert [v for k, v in r.items() if k.lower() == name] == ["no-store"]
     (ev,) = events(engine)
     assert ev["chs"] == 1 and ev["st"] == 200 and "blk" not in ev
