@@ -7,7 +7,7 @@ import pytest
 from flask import Flask, Response
 
 from camada.challenge.page import challenge_page_csp
-from camada.engine import Camada
+from camada.engine import NO_STORE_HEADERS, Camada
 from camada.flask import init_app, script_tag, serve_challenge, track
 
 from .fake_analyst import BLOCKED_IP, FakeAnalyst
@@ -20,7 +20,7 @@ def app(default_engine: Camada) -> Flask:
 
     @app.get("/export")
     def export() -> Response:
-        return serve_challenge() or Response("file")
+        return serve_challenge() or Response("file", headers={"CDN-Cache-Control": "public, max-age=60", "Surrogate-Control": "max-age=60"})
 
     @app.after_request
     def site_csp(r: Response) -> Response:   # what Flask-Talisman does: a policy on every response
@@ -73,7 +73,8 @@ def test_a_route_gates_itself_with_serve_challenge(app: Flask, default_engine: C
     assert "content-security-policy-report-only" not in r.headers
     assert default_engine.kit is not None
     c.set_cookie("_cch", default_engine.kit.issue("172.16.0.9", default_engine.now_ms()))
-    assert c.get("/export", headers=html).get_data(as_text=True) == "file"
+    ok = c.get("/export", headers=html)
+    assert ok.get_data(as_text=True) == "file" and ok.headers["cdn-cache-control"] == "public, max-age=60" and ok.headers["surrogate-control"] == "max-age=60"   # not signalled: untouched
     default_engine.queue.flush()  # type: ignore[union-attr]
     assert [(e["st"], e.get("blk")) for e in analyst.all_events] == [(403, "challenge"), (200, None)]
 
@@ -82,7 +83,9 @@ def test_a_non_html_request_under_a_challenge_is_signalled(app: Flask, default_e
     c = app.test_client()
     r = c.get("/export", headers={"x-forwarded-for": "172.16.0.9", "accept": "application/json"})   # serve_challenge() runs inside the route
     assert r.status_code == 200 and r.get_data(as_text=True) == "file"
-    assert r.headers["x-camada-challenge"] == "1" and r.headers["cache-control"] == "no-store"
+    assert r.headers["x-camada-challenge"] == "1"
+    for name in NO_STORE_HEADERS:   # the app's CDN headers are overridden (camada-all-1zlg)
+        assert r.headers.getlist(name) == ["no-store"]
     default_engine.queue.flush()  # type: ignore[union-attr]
     (ev,) = analyst.all_events
     assert ev["chs"] == 1 and ev["st"] == 200 and "blk" not in ev
