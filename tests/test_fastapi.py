@@ -65,3 +65,12 @@ def test_a_route_gates_itself_with_serve_challenge(client: TestClient, default_e
     assert client.get("/export", headers={**html, "cookie": f"_cch={cch}"}).text == "file"
     default_engine.queue.flush()  # type: ignore[union-attr]
     assert [(e["st"], e.get("blk")) for e in analyst.all_events] == [(403, "challenge"), (200, None)]   # one request, one event
+
+
+def test_a_non_html_request_under_a_challenge_is_signalled(client: TestClient, default_engine: Camada, analyst: FakeAnalyst) -> None:
+    r = client.get("/export", headers={"x-forwarded-for": "172.16.0.9", "accept": "application/json"})   # serve_challenge() runs inside the route
+    assert r.status_code == 200 and r.text == "file"
+    assert r.headers["x-camada-challenge"] == "1" and r.headers["cache-control"] == "no-store"
+    default_engine.queue.flush()  # type: ignore[union-attr]
+    (ev,) = analyst.all_events
+    assert ev["chs"] == 1 and ev["st"] == 200 and "blk" not in ev

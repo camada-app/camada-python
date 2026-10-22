@@ -342,12 +342,34 @@ class TestChallenge:
         (ev,) = h.events()
         assert ev["st"] == 403 and ev["blk"] == "challenge" and ev["p"] == "/account"
 
-    def test_answers_json_for_a_non_html_request(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
-        h = Host(driver, analyst, engines)
+    def test_signals_a_non_html_request_and_lets_the_app_answer(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
+        def app(_: dict[str, Any]) -> tuple[int, list[tuple[str, str]], bytes]:
+            return 201, [("content-type", "application/json"), ("Cache-Control", "public, max-age=600")], b'{"ok":true}'
+
+        h = Host(driver, analyst, engines, handler=app)
         r = h("GET", "/api", headers=[("accept", "application/json")], peer=CHALLENGED_IP)
-        assert r.status == 403 and r.header("content-type") == "application/json" and json.loads(r.text) == {"error": "challenge_required"}
+        assert r.status == 201 and r.body == b'{"ok":true}' and len(h.seen) == 1
+        assert r.header("x-camada-challenge") == "1" and r.headers_named("cache-control") == ["no-store"] and r.header("x-rid")
         r2 = h("GET", "/api", headers=[("accept", "text/html"), ("sec-fetch-dest", "empty")], peer=CHALLENGED_IP)
-        assert r2.header("content-type") == "application/json"
+        assert r2.status == 201 and r2.header("x-camada-challenge") == "1"
+        evs = h.events()
+        assert len(evs) == 2 and all(e["chs"] == 1 and e["st"] == 201 and "dur" in e and "blk" not in e for e in evs)
+
+    @pytest.mark.parametrize("cfg", [{"exclude": ["/api"]}, {"sample": 0}])
+    def test_a_signalled_event_ships_past_exclude_and_sample(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada], cfg: dict[str, Any]) -> None:
+        analyst.config.update(cfg)
+        h = Host(driver, analyst, engines)
+        h("GET", "/api", headers=[("accept", "application/json")], peer=CHALLENGED_IP)
+        (ev,) = h.events()
+        assert ev["chs"] == 1 and ev["st"] == 200
+
+    def test_a_valid_cch_is_not_signalled(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
+        h = Host(driver, analyst, engines)
+        token = h.engine.kit.issue(CHALLENGED_IP, h.engine.now_ms())   # type: ignore[union-attr]
+        r = h("GET", "/api", headers=[("accept", "application/json"), ("cookie", f"_cch={token}")], peer=CHALLENGED_IP)
+        assert r.status == 200 and r.header("x-camada-challenge") is None and r.header("cache-control") is None
+        (ev,) = h.events()
+        assert "chs" not in ev
 
     def test_blocks_outright_rather_than_challenging_a_blocked_ip(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
         h = Host(driver, analyst, engines)
@@ -456,3 +478,20 @@ def test_is_challenge_page_needs_the_marker_and_an_html_body() -> None:
     assert not is_challenge_page([html])
     assert not is_challenge_page([("x-camada-challenge", "1"), ("content-type", "application/json")])
     assert not is_challenge_page([("x-camada-challenge", "0"), html])
+
+
+class TestServeChallengeSignal:
+    def test_on_demand_for_a_non_html_request_returns_none_and_signals(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
+        analyst.container = "v4"
+        analyst.config["sample"] = 0
+
+        def gated(req: dict[str, Any]) -> tuple[int, list[tuple[str, str]], bytes]:
+            assert h.engine.serve_challenge(req["camada"]) is None
+            return 200, [("cache-control", "max-age=60")], b"data"
+
+        h = Host(driver, analyst, engines, handler=gated)
+        r = h("GET", "/data", headers=[("accept", "application/json")])
+        assert r.status == 200 and r.body == b"data" and r.header("x-camada-challenge") == "1"
+        assert r.headers_named("cache-control") == ["no-store"]
+        (ev,) = h.events()
+        assert ev["chs"] == 1 and ev["st"] == 200 and "blk" not in ev
