@@ -264,6 +264,15 @@ class TestBeacon:
         assert row["sig"] == 1 and row["rid"] == "r-1" and row["tz"] == "UTC" and row["tap"] == "sdk-python"
         assert not forged.keys() & row.keys()
 
+    def test_stamps_rts_from_the_relay_clock_over_a_browser_supplied_one(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
+        h = Host(driver, analyst, engines)
+        before = int(time.time() * 1000)
+        body = json.dumps({"rid": "r-1", "rts": 1}).encode()
+        assert h("POST", "/_cam/fp", headers=[("content-type", "application/json")], body=body).status == 204
+        after = int(time.time() * 1000)
+        (row,) = h.events()
+        assert isinstance(row["rts"], int) and before <= row["rts"] <= after
+
     def test_drops_junk_bodies_instead_of_shipping_them(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
         h = Host(driver, analyst, engines)
         for junk in (b"not json", b"[1,2]", b"42", b""):

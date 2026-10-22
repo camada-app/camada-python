@@ -318,7 +318,7 @@ class Camada:
             return answer
         assert self.queue is not None
         row = {k: v for k, v in parsed.items() if k not in C.REQUEST_ROW_KEYS}
-        row.update(sig=1, ip=ip, tap=C.TAP)   # after the body: ip and tap are the server's word
+        row.update(sig=1, ip=ip, tap=C.TAP, rts=self.now_ms())   # after the body: ip, tap and rts (the relay clock) are the server's word
         self.queue.push(row)
         return answer
 
