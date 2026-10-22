@@ -13,7 +13,7 @@ from django.urls import path
 
 import camada
 from camada.challenge.page import challenge_page_csp
-from camada.engine import Camada
+from camada.engine import NO_STORE_HEADERS, Camada
 
 from .fake_analyst import BLOCKED_IP, FakeAnalyst
 from .hosts import engine_with, loaded
@@ -129,8 +129,8 @@ def test_a_view_gates_itself_with_serve_challenge(engine: Camada) -> None:
 def test_a_non_html_request_under_a_challenge_is_signalled(engine: Camada) -> None:
     r = Client().get("/export/", HTTP_X_FORWARDED_FOR="172.16.0.9", HTTP_ACCEPT="application/json")   # serve_challenge() runs inside the view
     assert r.status_code == 200 and r.content == b"file"
-    assert r["x-camada-challenge"] == "1" and r["cache-control"] == "no-store"
-    for name in ("cache-control", "cdn-cache-control", "surrogate-control", "cloudflare-cdn-cache-control", "vercel-cdn-cache-control", "netlify-cdn-cache-control"):   # the app's CDN headers are overridden (camada-all-1zlg)
+    assert r["x-camada-challenge"] == "1"
+    for name in NO_STORE_HEADERS:   # the app's CDN headers are overridden (camada-all-1zlg)
         assert [v for k, v in r.items() if k.lower() == name] == ["no-store"]
     (ev,) = events(engine)
     assert ev["chs"] == 1 and ev["st"] == 200 and "blk" not in ev
