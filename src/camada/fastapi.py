@@ -28,8 +28,9 @@ def track(request: Any, event: str, user: str | None = None) -> None:
 
 
 def serve_challenge(request: Any) -> Response | None:
-    """The proof-of-work page (or 403 JSON) to return from a route you gate yourself; None once
-    the browser holds a valid _cch, or when the client cannot be identified (fail open)."""
+    """The proof-of-work page to return from a route you gate yourself; None once
+    the browser holds a valid _cch, when the client cannot be identified (fail open), or for a non-page request
+    (signalled: render as usual)."""
     ctx = _ctx(request)
     a = engine_for(ctx).serve_challenge(ctx)
     return None if a is None else Response(content=a.body, status_code=a.status, headers=dict(a.headers))

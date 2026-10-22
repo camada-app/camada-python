@@ -123,3 +123,11 @@ def test_a_view_gates_itself_with_serve_challenge(engine: Camada) -> None:
     cch = engine.kit.issue("172.16.0.9", engine.now_ms())
     assert c.get("/export/", HTTP_COOKIE=f"_cch={cch}", **html).content == b"file"
     assert [(e["st"], e.get("blk")) for e in events(engine)] == [(403, "challenge"), (200, None)]
+
+
+def test_a_non_html_request_under_a_challenge_is_signalled(engine: Camada) -> None:
+    r = Client().get("/export/", HTTP_X_FORWARDED_FOR="172.16.0.9", HTTP_ACCEPT="application/json")   # serve_challenge() runs inside the view
+    assert r.status_code == 200 and r.content == b"file"
+    assert r["x-camada-challenge"] == "1" and r["cache-control"] == "no-store"
+    (ev,) = events(engine)
+    assert ev["chs"] == 1 and ev["st"] == 200 and "blk" not in ev

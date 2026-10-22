@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
-from .engine import Answer, Camada, Passed, Req, is_challenge_page, with_challenge_csp
+from .engine import Answer, Camada, Passed, Req, is_challenge_page, with_challenge_csp, with_signal
 from .guarded import log_rate_limited
 
 Scope = MutableMapping[str, Any]
@@ -133,6 +133,9 @@ class CamadaASGI:
                         headers.append((b"x-rid", p.rid.encode()))
                     if p.set_cookie:
                         headers.append((b"set-cookie", p.set_cookie.encode("latin-1")))
+                    if p.ctx is not None and p.ctx.get("signalled"):
+                        sig = with_signal([(bytes(k).decode("latin-1"), bytes(v).decode("latin-1")) for k, v in headers])
+                        headers = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in sig]
                     if p.ctx is not None and p.ctx.get("challenged"):
                         decoded = [(bytes(k).decode("latin-1"), bytes(v).decode("latin-1")) for k, v in headers]
                         if is_challenge_page(decoded):
