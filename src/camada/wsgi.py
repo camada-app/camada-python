@@ -6,7 +6,7 @@ import io
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
-from .engine import Answer, Camada, Passed, Req, is_challenge_page, with_challenge_csp
+from .engine import Answer, Camada, Passed, Req, is_challenge_page, with_challenge_csp, with_signal
 from .guarded import log_rate_limited
 
 StartResponse = Callable[..., Any]
@@ -174,6 +174,8 @@ class CamadaWSGI:
                     headers = [*headers, ("x-rid", p.rid)]
                 if p.set_cookie:
                     headers = [*headers, ("set-cookie", p.set_cookie)]
+                if p.ctx is not None and p.ctx.get("signalled"):
+                    headers = with_signal(headers)
                 if p.ctx is not None and p.ctx.get("challenged"):
                     if is_challenge_page(headers):
                         headers = with_challenge_csp(headers)

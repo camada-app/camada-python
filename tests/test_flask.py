@@ -76,3 +76,13 @@ def test_a_route_gates_itself_with_serve_challenge(app: Flask, default_engine: C
     assert c.get("/export", headers=html).get_data(as_text=True) == "file"
     default_engine.queue.flush()  # type: ignore[union-attr]
     assert [(e["st"], e.get("blk")) for e in analyst.all_events] == [(403, "challenge"), (200, None)]
+
+
+def test_a_non_html_request_under_a_challenge_is_signalled(app: Flask, default_engine: Camada, analyst: FakeAnalyst) -> None:
+    c = app.test_client()
+    r = c.get("/export", headers={"x-forwarded-for": "172.16.0.9", "accept": "application/json"})   # serve_challenge() runs inside the route
+    assert r.status_code == 200 and r.get_data(as_text=True) == "file"
+    assert r.headers["x-camada-challenge"] == "1" and r.headers["cache-control"] == "no-store"
+    default_engine.queue.flush()  # type: ignore[union-attr]
+    (ev,) = analyst.all_events
+    assert ev["chs"] == 1 and ev["st"] == 200 and "blk" not in ev
