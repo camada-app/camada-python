@@ -358,7 +358,7 @@ class TestChallenge:
         h = Host(driver, analyst, engines, handler=app)
         r = h("GET", "/api", headers=[("accept", "application/json")], peer=CHALLENGED_IP)
         assert r.status == 201 and r.body == b'{"ok":true}' and len(h.seen) == 1
-        assert r.header("x-camada-challenge") == "1" and r.headers_named("cache-control") == ["no-store"] and r.header("x-rid")
+        assert r.header("x-camada-challenge") == "1" and r.header("x-rid")
         for name in NO_STORE_HEADERS:   # the app's CDN headers are overridden (camada-all-1zlg)
             assert r.headers_named(name) == ["no-store"]
         r2 = h("GET", "/api", headers=[("accept", "text/html"), ("sec-fetch-dest", "empty")], peer=CHALLENGED_IP)

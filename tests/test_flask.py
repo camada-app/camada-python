@@ -7,7 +7,7 @@ import pytest
 from flask import Flask, Response
 
 from camada.challenge.page import challenge_page_csp
-from camada.engine import Camada
+from camada.engine import NO_STORE_HEADERS, Camada
 from camada.flask import init_app, script_tag, serve_challenge, track
 
 from .fake_analyst import BLOCKED_IP, FakeAnalyst
@@ -83,8 +83,8 @@ def test_a_non_html_request_under_a_challenge_is_signalled(app: Flask, default_e
     c = app.test_client()
     r = c.get("/export", headers={"x-forwarded-for": "172.16.0.9", "accept": "application/json"})   # serve_challenge() runs inside the route
     assert r.status_code == 200 and r.get_data(as_text=True) == "file"
-    assert r.headers["x-camada-challenge"] == "1" and r.headers["cache-control"] == "no-store"
-    for name in ("cache-control", "cdn-cache-control", "surrogate-control", "cloudflare-cdn-cache-control", "vercel-cdn-cache-control", "netlify-cdn-cache-control"):   # the app's CDN headers are overridden (camada-all-1zlg)
+    assert r.headers["x-camada-challenge"] == "1"
+    for name in NO_STORE_HEADERS:   # the app's CDN headers are overridden (camada-all-1zlg)
         assert r.headers.getlist(name) == ["no-store"]
     default_engine.queue.flush()  # type: ignore[union-attr]
     (ev,) = analyst.all_events

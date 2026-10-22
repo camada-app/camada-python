@@ -57,12 +57,13 @@ NO_STORE_HEADERS = (
     "cache-control", "cdn-cache-control", "surrogate-control", "cloudflare-cdn-cache-control",
     "vercel-cdn-cache-control", "netlify-cdn-cache-control",
 )
+_SIGNAL_HEADERS = frozenset((*NO_STORE_HEADERS, "x-camada-challenge"))
 
 
 def with_signal(headers: Headers) -> Headers:
     """The headers of a signalled response: `x-camada-challenge: 1`, and `no-store` in place of any cache header the
     app set (the signal is per client, so no shared cache may keep the copy)."""
-    return [(k, v) for k, v in headers if k.lower() not in (*NO_STORE_HEADERS, "x-camada-challenge")] + [
+    return [(k, v) for k, v in headers if k.lower() not in _SIGNAL_HEADERS] + [
         *((h, "no-store") for h in NO_STORE_HEADERS), ("x-camada-challenge", "1"),
     ]
 
