@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from camada.challenge.page import challenge_page_csp
-from camada.engine import Camada, is_challenge_page
+from camada.engine import NO_STORE_HEADERS, Camada, is_challenge_page
 from camada.version import SDK_ID
 
 from .fake_analyst import (
@@ -353,12 +353,14 @@ class TestChallenge:
 
     def test_signals_a_non_html_request_and_lets_the_app_answer(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
         def app(_: dict[str, Any]) -> tuple[int, list[tuple[str, str]], bytes]:
-            return 201, [("content-type", "application/json"), ("Cache-Control", "public, max-age=600")], b'{"ok":true}'
+            return 201, [("content-type", "application/json"), ("Cache-Control", "public, max-age=600"), ("CDN-Cache-Control", "public, max-age=60"), ("Surrogate-Control", "max-age=60")], b'{"ok":true}'
 
         h = Host(driver, analyst, engines, handler=app)
         r = h("GET", "/api", headers=[("accept", "application/json")], peer=CHALLENGED_IP)
         assert r.status == 201 and r.body == b'{"ok":true}' and len(h.seen) == 1
-        assert r.header("x-camada-challenge") == "1" and r.headers_named("cache-control") == ["no-store"] and r.header("x-rid")
+        assert r.header("x-camada-challenge") == "1" and r.header("x-rid")
+        for name in NO_STORE_HEADERS:   # the app's CDN headers are overridden (camada-all-1zlg)
+            assert r.headers_named(name) == ["no-store"]
         r2 = h("GET", "/api", headers=[("accept", "text/html"), ("sec-fetch-dest", "empty")], peer=CHALLENGED_IP)
         assert r2.status == 201 and r2.header("x-camada-challenge") == "1"
         evs = h.events()
@@ -373,10 +375,11 @@ class TestChallenge:
         assert ev["chs"] == 1 and ev["st"] == 200
 
     def test_a_valid_cch_is_not_signalled(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
-        h = Host(driver, analyst, engines)
+        h = Host(driver, analyst, engines, handler=lambda _: (200, [("CDN-Cache-Control", "public, max-age=60")], b"ok"))
         token = h.engine.kit.issue(CHALLENGED_IP, h.engine.now_ms())   # type: ignore[union-attr]
         r = h("GET", "/api", headers=[("accept", "application/json"), ("cookie", f"_cch={token}")], peer=CHALLENGED_IP)
         assert r.status == 200 and r.header("x-camada-challenge") is None and r.header("cache-control") is None
+        assert r.headers_named("cdn-cache-control") == ["public, max-age=60"]   # not signalled: the app's header is untouched
         (ev,) = h.events()
         assert "chs" not in ev
 
@@ -496,11 +499,11 @@ class TestServeChallengeSignal:
 
         def gated(req: dict[str, Any]) -> tuple[int, list[tuple[str, str]], bytes]:
             assert h.engine.serve_challenge(req["camada"]) is None
-            return 200, [("cache-control", "max-age=60")], b"data"
+            return 200, [("cache-control", "max-age=60"), ("CDN-Cache-Control", "public, max-age=60")], b"data"
 
         h = Host(driver, analyst, engines, handler=gated)
         r = h("GET", "/data", headers=[("accept", "application/json")])
         assert r.status == 200 and r.body == b"data" and r.header("x-camada-challenge") == "1"
-        assert r.headers_named("cache-control") == ["no-store"]
+        assert r.headers_named("cache-control") == ["no-store"] and r.headers_named("cdn-cache-control") == ["no-store"]
         (ev,) = h.events()
         assert ev["chs"] == 1 and ev["st"] == 200 and "blk" not in ev
