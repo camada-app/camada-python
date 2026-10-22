@@ -310,7 +310,8 @@ class Camada:
             return answer
         assert self.queue is not None
         row = {k: v for k, v in parsed.items() if k not in C.REQUEST_ROW_KEYS}
-        self.queue.push({**row, "sig": 1, "ip": ip, "tap": C.TAP})   # spread first: ip and tap are the server's word
+        row.update(sig=1, ip=ip, tap=C.TAP)   # after the body: ip and tap are the server's word
+        self.queue.push(row)
         return answer
 
     def script_tag(self, ctx: Mapping[str, Any] | None) -> str:
