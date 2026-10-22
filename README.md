@@ -182,7 +182,8 @@ this vocabulary:
 
 A route you gate yourself: `serve_challenge(request)` (Flask: `serve_challenge()`) returns the
 page as a framework response to return from the handler until the browser holds a valid `_cch`,
-then `None`.
+then `None`. A non-page (non-HTML) request also gets `None` and is signalled
+(`x-camada-challenge: 1`, `no-store`, `chs: 1`).
 
 ## What this tap can see
 
