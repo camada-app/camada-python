@@ -13,7 +13,7 @@ from django.http import HttpRequest, HttpResponse, HttpResponseBase
 from . import constants as C
 from . import engine_for, get_default
 from .challenge.page import challenge_page_csp
-from .engine import INERT, Answer, Camada, Passed, is_challenge_page
+from .engine import INERT, NO_STORE_HEADERS, Answer, Camada, Passed, is_challenge_page
 from .guarded import log_rate_limited
 from .wsgi import req_from_environ
 
@@ -135,7 +135,8 @@ class CamadaMiddleware:
                     secure="; Secure" in p.set_cookie,
                 )
             if p.ctx is not None and p.ctx.get("signalled"):
-                response["cache-control"] = "no-store"   # replaces the app's
+                for h in NO_STORE_HEADERS:
+                    response[h] = "no-store"   # replaces the app's
                 response["x-camada-challenge"] = "1"
             if p.ctx is not None and p.ctx.get("challenged"):
                 if is_challenge_page(list(response.items())):
