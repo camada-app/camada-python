@@ -196,6 +196,9 @@ _JS_DOT = r"[^\n\r\u2028\u2029]"
 _JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
 
 
+_FLAG_HEADER = re.compile(r"\(\?[A-Za-z-]*:")   # modifier flags, bounded: stops at the first non-flag
+
+
 @dataclass(slots=True)
 class _Frame:
     parent: int
@@ -285,6 +288,8 @@ def _scan_groups(pattern: str) -> _Scan:
             stack.append(len(frames) - 1)
             gm = _GROUP_NAME.match(pattern, i) if q and cap else None
             quiet = gm.end() if gm else i + (4 if pattern.startswith("?<", i + 1) and not cap else 3 if q else 1)
+            if q and (fm := _FLAG_HEADER.match(pattern, i)):   # modifier flags `(?i-m:` are no atoms
+                quiet = fm.end()
             if cap:
                 groups.append((len(frames) - 1, (gm[1] if gm else None) if q else None))
         elif ch == "|":
