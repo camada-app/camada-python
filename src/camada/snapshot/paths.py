@@ -64,14 +64,15 @@ def request_regex_budget() -> Iterator[None]:
 
 def regex_hit(rx: regex.Pattern[str], s: str, on_error: bool) -> bool:
     """rx.search(s) under the per-match limit and, in a walk, what is left of the request's budget.
-    A spent budget or a timeout answers `on_error` (a deny rule hits, a skip rule misses), like over-cap."""
+    A spent budget, a timeout or a regex runtime failure (MemoryError, RuntimeError) answers `on_error`
+    (a deny rule hits, a skip rule misses), like over-cap."""
     left: float | None = getattr(_budget, "left", None)
     if left is not None and left <= 0:
         return on_error
     t0 = time.monotonic()
     try:
         return rx.search(s, timeout=MATCH_BUDGET_MS / 1000) is not None
-    except TimeoutError:
+    except (TimeoutError, MemoryError, RuntimeError):
         return on_error
     finally:
         if left is not None:
