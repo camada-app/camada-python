@@ -179,7 +179,7 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
         if scan[1]:
             return None
         return regex.compile(_js_to_re(pattern, scan), regex.ASCII | regex.V0 | flags)
-    except (regex.error, TypeError, ValueError, OverflowError, RecursionError):   # RecursionError: deeply nested groups
+    except Exception:   # regex.error, RecursionError (deeply nested groups), and what regex leaks, e.g. KeyError on `(?V1)`
         return None
 
 
