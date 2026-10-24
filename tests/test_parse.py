@@ -348,22 +348,12 @@ def test_s5_raw_over_cap_but_stripped_under_cap_deny_hits_skip_misses() -> None:
         (r"^[\s^]$", "^", True), (r"^[\s^]$", " ", True), (r"^[\S]$", " ", False), (r"^[\S1]$", "1", True),
         (r"^\s$", " ", True), (r"^\S$", " ", False),
         (r"^\s$", "\u2028", True), (r"^\S$", "\u2028", False),
+        # an astral char is one char here, two UTF-16 units in JS (accepted gap, camada-all-vuvo)
+        ("^.$", "\U0001F600", True), ("^..$", "\U0001F600", False), ("^[^a]$", "\U0001F600", True),
+        (r"^\S$", "\U0001F600", True), ("^a.*b$", "a\U0001F600b", True),
     ],
 )
 def test_js_dot_empty_class_and_unicode_space(pattern: str, text: str, expect: bool) -> None:
-    rx = compile_regex(pattern)
-    assert rx is not None and (rx.search(text) is not None) is expect
-
-
-@pytest.mark.parametrize(
-    ("pattern", "text", "expect"),
-    [
-        (r"^.$", "\U0001F600", True), (r"^..$", "\U0001F600", False), (r"^.{2}$", "\U0001F600", False),
-        (r"^[^a]$", "\U0001F600", True), (r"^\S$", "\U0001F600", True),
-        (r"^a.*b$", "a\U0001F600b", True),
-    ],
-)
-def test_astral_char_is_one_code_point_accepted_gap_vs_js_camada_all_vuvo(pattern: str, text: str, expect: bool) -> None:
     rx = compile_regex(pattern)
     assert rx is not None and (rx.search(text) is not None) is expect
 
