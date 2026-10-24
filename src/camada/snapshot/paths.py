@@ -130,14 +130,15 @@ def path_hit(pred: PathPred, forms: PathForms, deny: bool) -> bool:
 
 
 def path_pred(
-    op: str, values: Sequence[str], compile_regex: Callable[[str], re.Pattern[str] | None], deny: bool = True
+    op: str, values: Sequence[str], compile_regex: Callable[[str], Callable[[str], bool] | None], deny: bool = True
 ) -> PathPred:
     """One path condition -> a predicate over a single path form. `compile_regex` is the caller's
-    JS-regex translation, already case-insensitive. A `matches` form over MAX_MATCH_INPUT never runs
-    the regex: it answers `deny` (a hit for block/challenge/warn, a miss for skip)."""
+    JS-regex translation, already case-insensitive, as a predicate that answers `deny` past
+    its limits. A `matches` form over MAX_MATCH_INPUT never runs the regex:
+    it answers `deny` (a hit for block/challenge/warn, a miss for skip)."""
     if op == "matches":
         rx = compile_regex(values[0])
-        return lambda p: rx is not None and (deny if over_cap(p) else rx.search(p) is not None)
+        return lambda p: rx is not None and (deny if over_cap(p) else rx(p))
     if op == "starts_with":
         v = values[0]
         key = dir_key(v) if v.endswith("/") else canon_path(v)
