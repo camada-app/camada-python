@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from camada.snapshot.match import Matcher, MatchInput
-from camada.snapshot.parse import _js_to_re, compile_regex, parse_snapshot
+from camada.snapshot.parse import _JS_BRACE, _js_to_re, compile_regex, parse_snapshot
 
 from .conftest import read_bin, read_json
 
@@ -372,6 +372,8 @@ def test_js_dot_empty_class_and_unicode_space(pattern: str, text: str, expect: b
         ("^a{2,3}$", "aa", True), ("^a{2,3}$", "a", False), ("^a{2,3}$", "aaaa", False),
         ("^(?:a|){99999999999}$", "", True), ("^(?:a?){99999999999}$", "", True),
         ("^a{1," + "9" * 5000 + "}$", "a", True), ("^a{70000}$", "a", False), ("^a{65535}$", "a", False),
+        ("^a{" + "0" * 5000 + "1}$", "a", True), ("^a{1," + "0" * 5000 + "2}$", "aa", True),
+        ("^a{2049}$", "a" * 2049, True), ("^a{2049}$", "a" * 2048, False),
     ],
 )
 def test_quantifier_bound_above_limit_is_clamped(pattern: str, text: str, expect: bool) -> None:
@@ -380,8 +382,17 @@ def test_quantifier_bound_above_limit_is_clamped(pattern: str, text: str, expect
 
 
 def test_quantifier_bound_emits_clamped_limit() -> None:
-    assert "{65535}" in _js_to_re("^(?:a|){99999999999}$")
-    assert "{65535}" in _js_to_re("^a{65535}$") and "{65536}" not in _js_to_re("^a{65536}$")
+    assert "{2049}" in _js_to_re("^(?:a|){99999999999}$")
+    assert "{2049}" in _js_to_re("^a{2049}$") and "{2050}" not in _js_to_re("^a{2050}$")
+
+
+@pytest.mark.parametrize("pattern", ["a{70000,65535}", "a{99999999999,99999999998}", "a{3,2}", "a{" + "0" * 5000 + "3,2}"])
+def test_quantifier_min_above_max_is_rejected(pattern: str) -> None:
+    assert compile_regex(pattern) is None
+
+
+def test_quantifier_brace_without_close_does_not_backtrack() -> None:
+    assert _JS_BRACE.match("{" + "1" * 20000, 0) is None
 
 
 @pytest.mark.parametrize("pattern", [r"[a\s-", r"[\s-"])
