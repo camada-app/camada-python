@@ -216,6 +216,7 @@ class _Frame:
     la: bool = False   # positive lookahead (a negative one never keeps a capture)
     solid: bool = False   # the current alternation branch holds an atom that must consume input
     nullable: bool = False   # the body can match empty (a branch with no such atom, or a lookaround)
+    holds: bool = False   # it or a frame inside it repeats optionally (min-0 or repeat) over a nullable body
 
 
 _Scan = tuple[bool, bool, dict[int, tuple[int, bool]]]
@@ -311,6 +312,8 @@ def _scan_groups(pattern: str) -> _Scan:
             fr.min0 = _min0_at(pattern, i + 1)
             fr.rep = pattern.startswith(("+", "*"), i + 1) or (b is not None and (b[2] and not b[3] or _num(b[3] or b[1]) > (1, "1")))
             fr.nullable = fr.nullable or not fr.solid or fr.neg or fr.lb or fr.la
+            fr.holds |= (fr.min0 or fr.rep) and fr.nullable
+            frames[fr.parent].holds |= fr.holds
             if not fr.nullable and not fr.min0:
                 frames[fr.parent].solid = True
         elif ch not in "^$)?*+" and i >= quiet:
@@ -322,17 +325,14 @@ def _scan_groups(pattern: str) -> _Scan:
         i += 1
     # per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a positive lookahead at or above
     in_lb, unset, rep_above, in_la, rn = [False], [False], [False], [False], [-1]   # rn: end of the nearest repeating nullable frame
-    holds = [(fr.min0 or fr.rep) and fr.nullable for fr in frames]   # a nullable optional-iteration frame at or below
-    for x in range(len(frames) - 1, 0, -1):
-        holds[frames[x].parent] |= holds[x]
-    la_div = [False]   # a positive lookahead at or above holds such a frame
-    for x, fr in enumerate(frames[1:], 1):
+    la_div = [False]   # a positive lookahead at or above holds an optional nullable repeat
+    for fr in frames[1:]:
         p = frames[fr.parent]
         in_lb.append(fr.lb or in_lb[fr.parent])
         unset.append(fr.min0 or fr.neg or p.alt or unset[fr.parent])
         rep_above.append(p.rep or rep_above[fr.parent])
         in_la.append(fr.la or in_la[fr.parent])
-        la_div.append(fr.la and holds[x] or la_div[fr.parent])
+        la_div.append(fr.la and fr.holds or la_div[fr.parent])
         rn.append(fr.end if fr.rep and fr.nullable else rn[fr.parent])
     names = {g[1]: k for k, g in enumerate(groups) if g[1] is not None}
     for ref, is_name, at, end, home in refs:
