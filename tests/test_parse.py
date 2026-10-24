@@ -157,6 +157,9 @@ def test_non_js_brace_is_text_not_a_bound(pattern: str, text: str, not_text: str
         (r"^[\B]$", "B", True), (r"^[\p]$", "p", True), (r"^[\b]$", "\b", True),
         (r"^\d\w\s\b", "1a ", False), (r"^\d\w\s", "1a ", True),
         (r"^\c1$", "\\c1", True), (r"^\c$", "\\c", True), (r"^\v$", "\v", True), (r"^\v$", "\n", False),
+        (r"^[\c1]$", "\u0011", True), (r"^[\c1]$", "1", False), (r"^[\c_]$", "\u001f", True), (r"^[\cA]$", "\u0001", True),
+        (r"^[\c*]$", "\\", True), (r"^[\c*]$", "c", True), (r"^[\c*]$", "*", True), (r"^[\c*]$", "j", False),
+        (r"^[\c]$", "c", True), (r"^\c_$", "\\c_", True),
     ],
 )
 def test_js_identity_escapes_and_dollar(pattern: str, text: str, expect: bool) -> None:
