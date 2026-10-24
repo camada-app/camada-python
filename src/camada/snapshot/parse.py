@@ -177,7 +177,7 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
 
 
 _JS_BRACE = re.compile(r"\{([0-9]+)(,)?([0-9]*)\}")
-_RE_MAX_BOUND = 4294967294   # sre's MAXREPEAT - 1 (no `_sre` stub for mypy); a larger repeat number is an OverflowError
+_RE_MAX_BOUND = 65535   # same as camada-php; below re's MAXREPEAT so an empty-matching group repeated m times stays cheap
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
@@ -296,9 +296,11 @@ def _js_to_re(pattern: str) -> str:
                 i += 1
                 continue
             lo, comma, hi = brace.groups()
-            if int(lo) > _RE_MAX_BOUND:
+            def over(d: str) -> bool:   # len check first: int() raises on a huge digit string
+                return len(d.lstrip("0")) > 5 or int(d) > _RE_MAX_BOUND
+            if over(lo):
                 lo = str(_RE_MAX_BOUND)
-            if hi and int(hi) > _RE_MAX_BOUND:
+            if hi and over(hi):
                 hi = ""   # an upper bound past it never binds a real input, so drop it
             out.append(f"{{{lo}{comma or ''}{hi}}}")
             i = brace.end()
