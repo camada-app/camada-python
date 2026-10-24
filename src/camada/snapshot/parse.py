@@ -177,6 +177,9 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
 _JS_BRACE = re.compile(r"\{[0-9]+(?:,[0-9]*)?\}")
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
+_JS_WS = r"\t-\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"   # JS \s; re.ASCII's is ASCII-only
+_JS_DOT = r"[^\n\r\u2028\u2029]"
+_JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
 
 
 def _js_to_re(pattern: str) -> str:
@@ -184,9 +187,12 @@ def _js_to_re(pattern: str) -> str:
     char) -> `[\s\S]`, `\cX` -> the control character, a `{` that is no JS quantifier (`{,3}`,
     `{ 1}`) -> `\{` (JS reads it as text, `re` as a bound), and `$` outside a class -> `\Z` (JS `$` never
     matches before a trailing newline). `\<letter>` outside JS's escape set is the bare letter, as JS reads it
-    without `u` (`\p{L}` is "p{L}", `\A` is "A"). Anything else `re` rejects still fails open."""
+    without `u` (`\p{L}` is "p{L}", `\A` is "A"). `.` outside a class excludes \n \r U+2028 U+2029 as in JS; `[]`
+    never matches (`(?!)`) and a `]` outside a class is text; `\s`/`\S` are JS's Unicode whitespace (inside a class
+    they become a union with the rest of it, and a `-` beside one stays a literal dash). Anything else `re` rejects still fails open."""
     out: list[str] = []
     i, n, in_class = 0, len(pattern), False
+    start, neg, pulled, pulled_end, solo_end = 0, False, [], -1, -1   # the open class: its `[` index in out, negation, \s/\S pulled out
     named = _JS_NAMED_GROUP.search(pattern) is not None
     while i < n:
         ch = pattern[i]
@@ -198,18 +204,54 @@ def _js_to_re(pattern: str) -> str:
                 continue
             kept = (not (nxt.isascii() and nxt.isalpha()) or _JS_ESCAPE.match(pattern, i + 1) is not None
                     or (nxt == "B" and not in_class) or (nxt == "k" and named) or (nxt == "c" and in_class))
+            if nxt in "sS":
+                if in_class:
+                    pulled.append(_JS_SPACE[nxt])
+                    pulled_end = i + 2
+                else:
+                    out.append(_JS_SPACE[nxt])
+                i += 2
+                continue
             out.append(pattern[i : i + 2] if kept else "\\\\c" if nxt == "c" else nxt)   # JS reads `\c` before a non-letter as text
             i += 2
             continue
         if in_class:
-            in_class = ch != "]"
-        elif ch == "[":
+            if ch != "]":
+                dash = ch == "-" and (i in (pulled_end, solo_end) or pattern.startswith(("\\s", "\\S"), i + 1))
+                if dash and i == pulled_end:   # JS reads the atom after that dash as standalone: a dash right after it is text too
+                    m = _JS_ESCAPE.match(pattern, i + 2) if pattern.startswith("\\", i + 1) else None
+                    solo_end = i + (3 if m is None and pattern.startswith("\\", i + 1) else 2) + (m.end() - m.start() if m else 0)
+                out.append("\\-" if dash else ch)
+            elif pulled:
+                body = "".join(out[start + 1 + neg :])
+                body = "\\" * body.startswith("^") + body   # `[\s^]` is not a negated class
+                alts = ([f"[{body}]"] if body else []) + pulled
+                u = "|".join(alts)   # a lookahead, so a char matches one way only (no ReDoS)
+                out[start:] = [f"(?:(?{'!' if neg else '='}{u})[\\s\\S])" if neg or len(alts) > 1 else u]
+                in_class = False
+            else:
+                out.append("]")
+                in_class = False
+            i += 1
+            continue
+        if ch in "].":
+            out.append("\\]" if ch == "]" else _JS_DOT)
+            i += 1
+            continue
+        if ch == "[":
             if pattern.startswith("[^]", i):
                 out.append("[\\s\\S]")
                 i += 3
                 continue
-            in_class = True
-        elif ch == "(" and _JS_NAMED_GROUP.match(pattern, i):
+            if pattern.startswith("[]", i):
+                out.append("(?!)")
+                i += 2
+                continue
+            in_class, start, neg, pulled = True, len(out), pattern.startswith("^", i + 1), []
+            out.append("[")
+            i += 1
+            continue
+        if ch == "(" and _JS_NAMED_GROUP.match(pattern, i):
             out.append("(?P<")
             i += 3
             continue
