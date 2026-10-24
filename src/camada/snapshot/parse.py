@@ -185,8 +185,8 @@ _RE_MAX_BOUND = 65535   # same as camada-php: above any path or header a request
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
-_JS_BACKREF = re.compile(r"\\k<([^>]+)>")
-_JS_REF = re.compile(r"\\(?:k<([^>]+)>|([1-9][0-9]*))")   # a named or numbered backreference: group 1 or 2
+_JS_BACKREF = re.compile(r"\\k<([^<>]+)>")   # a JS name holds no `<` or `>`: linear on a run of `\k<`
+_JS_REF = re.compile(r"\\(?:k<([^<>]+)>|([1-9][0-9]*))")   # a named or numbered backreference: group 1 or 2
 _JS_HAS_REF = re.compile(r"\\[1-9k]")
 _JS_WS = r"\t-\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"   # JS \s; re.ASCII's is ASCII-only
 _JS_DOT = r"[^\n\r\u2028\u2029]"
@@ -199,27 +199,39 @@ class _Frame:
     alt: bool = False   # has a `|`
     min0: bool = False   # min-0 quantified
     neg: bool = False   # negative lookaround
+    lb: bool = False   # lookbehind (positive or negative)
     end: int = -1   # index of its `)`, -1 while open
+
+
+def _in_lookbehind(frames: list[_Frame], f: int) -> bool:
+    while f >= 0:
+        if frames[f].lb:
+            return True
+        f = frames[f].parent
+    return False
 
 
 def _scan_groups(pattern: str) -> tuple[bool, bool]:
     r"""(a real `(?<name>` group exists, a backreference may target a group that did not capture): one escape- and class-aware
     walk (a class opens at an unescaped `[`, `[` is literal inside, the first unescaped `]` closes it). A backreference
     diverges when its group is still open at the reference, sits under a min-0 quantifier or a negative lookaround
-    (itself or any ancestor), or lies in an alternation branch (an ancestor or the top level has a `|`)."""
+    (itself or any ancestor), or lies in an alternation branch (an ancestor or the top level has a `|`).
+    A backreference inside a lookbehind, or to a group with a lookbehind ancestor, also diverges: JS matches a lookbehind right
+    to left (so "closed before the reference" is backwards there, and a quantified group keeps its leftmost repetition).
+    With named groups present, a `\k<name>` that names no group is a JS SyntaxError, so it fails open."""
     if not _JS_HAS_REF.search(pattern):
         return False, False   # nothing reads the names or can diverge without a reference
     frames = [_Frame(-1)]
     stack = [0]
     groups: list[tuple[int, str | None]] = []   # (frame, name) in `(` order
-    refs: list[tuple[str, bool, int]] = []   # (name or number, is a name, index)
+    refs: list[tuple[str, bool, int, int]] = []   # (name or number, is a name, index, enclosing frame)
     i, n, in_class, named = 0, len(pattern), False, False
     while i < n:
         ch = pattern[i]
         if ch == "\\":
             if not in_class:
                 if m := _JS_REF.match(pattern, i):
-                    refs.append((m[1] or m[2], m[1] is not None, i))
+                    refs.append((m[1] or m[2], m[1] is not None, i, stack[-1]))
             i += 2
             continue
         if in_class:
@@ -231,7 +243,8 @@ def _scan_groups(pattern: str) -> tuple[bool, bool]:
             cap = not q or (pattern.startswith("<", i + 2) and pattern[i + 3 : i + 4] not in ("=", "!"))
             if q and cap:
                 named = True
-            frames.append(_Frame(stack[-1], neg=pattern.startswith(("?!", "?<!"), i + 1)))
+            frames.append(_Frame(stack[-1], neg=pattern.startswith(("?!", "?<!"), i + 1),
+                                 lb=pattern.startswith(("?<=", "?<!"), i + 1)))
             stack.append(len(frames) - 1)
             if cap:
                 groups.append((len(frames) - 1, pattern[i + 3 : pattern.find(">", i)] if q else None))
@@ -244,14 +257,18 @@ def _scan_groups(pattern: str) -> tuple[bool, bool]:
             fr.min0 = pattern.startswith(("?", "*"), i + 1) or (b is not None and not b[1].strip("0"))
         i += 1
     names = {g[1]: k for k, g in enumerate(groups) if g[1] is not None}
-    for ref, is_name, at in refs:
+    for ref, is_name, at, home in refs:
         if is_name:
             k = names.get(ref)
+            if k is None and named:
+                return named, True
         else:
             k = int(ref) - 1 if len(ref) < 8 and int(ref) <= len(groups) else None   # past the count it is an octal or identity escape
         if k is None:
             continue
         g = groups[k][0]
+        if _in_lookbehind(frames, home) or _in_lookbehind(frames, g):
+            return named, True
         if not 0 <= frames[g].end < at:
             return named, True
         f = g
