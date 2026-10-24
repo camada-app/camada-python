@@ -176,7 +176,7 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
         if diverges:
             return None
         return re.compile(_js_to_re(pattern, named), re.ASCII | flags)
-    except (re.error, TypeError, ValueError, OverflowError):
+    except (re.error, TypeError, ValueError, OverflowError, RecursionError):   # RecursionError: deeply nested groups
         return None
 
 
