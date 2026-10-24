@@ -24,6 +24,7 @@ the original is simply absent.
 """
 from __future__ import annotations
 
+import bisect
 import re
 import sys
 from collections.abc import Callable
@@ -367,11 +368,6 @@ def _num(d: str) -> tuple[int, str]:
 _MAX_NUM = _num(str(_RE_MAX_BOUND))
 
 
-def _exclusive(a: tuple[tuple[int, int], ...], b: tuple[tuple[int, int], ...]) -> bool:
-    """Two group paths that can't both participate: the first difference is one group's different alternatives."""
-    return next(((x[0] == y[0]) for x, y in zip(a, b, strict=False) if x != y), False)
-
-
 def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
     r"""The JS-only spellings a tenant is likely to author: `(?<name>` -> `(?P<name>`, `\k<name>` -> `(?P=name)`, `[^]` (any
     char) -> `[\s\S]`, `\cX` -> the control character, a `{` that is no JS quantifier (`{,3}`,
@@ -387,8 +383,8 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
     named, _, marks = scan or _scan_groups(pattern)
     opens: list[int] = []   # the unclosed `(` indices outside a class
     last_group = (-1, -1)   # the (open, close) indices of the group that closed last
-    path: list[list[int]] = [[0, 0]]   # the open groups outside a class as [group id, alternative index]; the root is group 0
-    names: dict[str, list[tuple[tuple[int, int], ...]]] = {}   # each capture name -> the path of every group that took it
+    bars = [-1]   # per open group, the root first: the index of the last `|` in it or an ancestor
+    last_named: dict[str, int] = {}   # each capture name -> the index of its last opener
     while i < n:
         ch = pattern[i]
         if ch == "\\" and i + 1 < n:
@@ -479,27 +475,27 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
             continue
         if ch == "(" and _JS_NON_GROUP.match(pattern, i):
             raise ValueError("non-JS group")   # compile_regex fails open: JS rejects it or the engine gives it a meaning (camada-all-lsl8)
-        if ch == "(":
-            if (nm := _GROUP_NAME.match(pattern, i)) and _JS_NAMED_GROUP.match(pattern, i):
-                here = tuple((g, a) for g, a in path)
-                seen = names.setdefault(nm[1], [])
-                if seen and (_JS_HAS_REF.search(pattern) or any(not _exclusive(here, p) for p in seen)):
-                    raise ValueError("duplicate group name")   # JS throws unless the twins sit in different alternatives (camada-all-7xyl)
-                seen.append(here)
-            path.append([i, 0])   # the id is the opener's index
-        elif ch == "|":
-            path[-1][1] += 1
-        elif ch == ")" and len(path) > 1:
-            path.pop()
         if ch == "(" and _JS_NAMED_GROUP.match(pattern, i):
+            if (gm := _GROUP_NAME.match(pattern, i)) and (prev := last_named.get(gm[1])) is not None:
+                # the twin is exclusive when a group open since before it has seen a `|` since (transitive: the last twin is enough);
+                # with a reference `regex` numbers the twins as one group, so `\2` would read another group
+                if named or bars[bisect.bisect_left(opens, prev)] < prev:
+                    raise ValueError("duplicate group name")   # JS throws unless the twins sit in different alternatives (camada-all-7xyl)
+            if gm:
+                last_named[gm[1]] = i
             opens.append(i)
+            bars.append(bars[-1])
             out.append("(?P<")
             i += 3
             continue
         elif ch == "(":
             opens.append(i)
+            bars.append(bars[-1])
         elif ch == ")" and opens:
             last_group = (opens.pop(), i)
+            bars.pop()
+        elif ch == "|":
+            bars[-1] = i
         elif ch == "$":
             out.append("\\Z")
             i += 1
