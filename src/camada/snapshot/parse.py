@@ -222,6 +222,7 @@ class _Frame:
     solid: bool = False   # the current alternation branch holds an atom that must consume input
     nullable: bool = False   # the body can match empty (a branch with no such atom, or a lookaround)
     holds: bool = False   # it or a frame inside it repeats optionally (min-0 or repeat) over a nullable body
+    opt: bool = False   # rep with iterations past its minimum (not `{n}` / `{n,n}`)
 
 
 _Scan = tuple[bool, bool, dict[int, tuple[int, bool]]]
@@ -251,7 +252,7 @@ def _scan_groups(pattern: str) -> _Scan:
     With named groups present, a `\k<name>` that names no group is a JS SyntaxError, so it fails open. Frames are created
     in `(` order, so one forward pass gives each its inherited flags and every reference is classified in O(1).
     A plain reference (group closed before it) also fails open when the group or an ancestor that closes before the reference
-    repeats and can match empty: JS rejects an empty iteration once the minimum is met and keeps the previous capture, `re`
+    has iterations past its minimum and can match empty: JS rejects an empty one and keeps the previous capture, `re`
     takes it and overwrites the capture with ''. The same walk tracks per frame whether the current branch holds an atom that
     must consume input (`solid`: a literal, `.`, a class or a letter escape not followed by a min-0 quantifier, or a
     non-nullable group) and whether the body can match empty (`nullable`: a branch without one, or a lookaround). Anything unsure
@@ -316,6 +317,7 @@ def _scan_groups(pattern: str) -> _Scan:
             b = _JS_BRACE.match(pattern, i + 1)
             fr.min0 = _min0_at(pattern, i + 1)
             fr.rep = pattern.startswith(("+", "*"), i + 1) or (b is not None and (b[2] and not b[3] or _num(b[3] or b[1]) > (1, "1")))
+            fr.opt = fr.rep and not (b is not None and (not b[2] or (b[3] != "" and _num(b[3]) == _num(b[1]))))
             fr.nullable = fr.nullable or not fr.solid or fr.neg or fr.lb or fr.la
             fr.holds |= (fr.min0 or fr.rep) and fr.nullable
             frames[fr.parent].holds |= fr.holds
@@ -329,7 +331,7 @@ def _scan_groups(pattern: str) -> _Scan:
                 frames[stack[-1]].solid = True
         i += 1
     # per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a positive lookahead at or above
-    in_lb, unset, rep_above, in_la, rn = [False], [False], [False], [False], [-1]   # rn: end of the nearest repeating nullable frame
+    in_lb, unset, rep_above, in_la, rn = [False], [False], [False], [False], [-1]   # rn: end of nearest opt+nullable frame
     la_div = [False]   # a positive lookahead at or above holds an optional nullable repeat
     for fr in frames[1:]:
         p = frames[fr.parent]
@@ -338,7 +340,7 @@ def _scan_groups(pattern: str) -> _Scan:
         rep_above.append(p.rep or rep_above[fr.parent])
         in_la.append(fr.la or in_la[fr.parent])
         la_div.append(fr.la and fr.holds or la_div[fr.parent])
-        rn.append(fr.end if fr.rep and fr.nullable else rn[fr.parent])
+        rn.append(fr.end if fr.opt and fr.nullable else rn[fr.parent])
     names = {g[1]: k for k, g in enumerate(groups) if g[1] is not None}
     for ref, is_name, at, end, home in refs:
         if is_name:
