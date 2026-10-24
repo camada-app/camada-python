@@ -169,8 +169,11 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
     authored as JS regexes (the analyst validates them with `new RegExp`), so the JS spellings
     `re` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them.
     An astral char is one code point here and two UTF-16 units in JS, so `.`, `[^a]` and `\S` count it
-    once (an accepted gap, camada-all-vuvo)."""
+    once (an accepted gap, camada-all-vuvo). A backreference to a group that may not have captured on that pass
+    (see _scan_groups) reads empty in JS and fails in `re`, so it fails open too."""
     try:
+        if _scan_groups(pattern)[1]:
+            return None
         return re.compile(_js_to_re(pattern), re.ASCII | flags)
     except (re.error, TypeError, ValueError, OverflowError):
         return None
@@ -182,9 +185,69 @@ _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # t
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
 _JS_BACKREF = re.compile(r"\\k<([^>]+)>")
+_JS_NUM_REF = re.compile(r"\\([1-9][0-9]*)")
 _JS_WS = r"\t-\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"   # JS \s; re.ASCII's is ASCII-only
 _JS_DOT = r"[^\n\r\u2028\u2029]"
 _JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
+
+
+def _scan_groups(pattern: str) -> tuple[bool, bool]:
+    r"""(a real `(?<name>` group exists, a backreference may target a group that did not capture): one escape- and class-aware
+    walk (a class opens at an unescaped `[`, `[` is literal inside, the first unescaped `]` closes it). A backreference
+    diverges when its group is still open at the reference, sits under a min-0 quantifier or a negative lookaround
+    (itself or any ancestor), or lies in an alternation branch (an ancestor or the top level has a `|`)."""
+    frames: list[list[Any]] = [[-1, False, False, False, None]]   # parent, has `|`, min-0 quantified, negative lookaround, end index
+    stack = [0]
+    groups: list[tuple[int, str | None]] = []
+    refs: list[tuple[str, bool, int]] = []   # groups: (frame, name) in `(` order; refs: (name or None, number, index)
+    i, n, in_class, named = 0, len(pattern), False, False
+    while i < n:
+        ch = pattern[i]
+        if ch == "\\":
+            if not in_class:
+                m = _JS_BACKREF.match(pattern, i) if pattern.startswith("k", i + 1) else _JS_NUM_REF.match(pattern, i)
+                if m:
+                    refs.append((m[1], pattern[i + 1] == "k", i))
+            i += 2
+            continue
+        if in_class:
+            in_class = ch != "]"
+        elif ch == "[":
+            in_class = True
+        elif ch == "(":
+            q = pattern.startswith("?", i + 1)
+            cap = not q or (pattern.startswith("<", i + 2) and pattern[i + 3 : i + 4] not in ("=", "!"))
+            if q and cap:
+                named = True
+            frames.append([stack[-1], False, False, pattern.startswith(("?!", "?<!"), i + 1), None])
+            stack.append(len(frames) - 1)
+            if cap:
+                groups.append((len(frames) - 1, pattern[i + 3 : pattern.find(">", i)] if q else None))
+        elif ch == "|":
+            frames[stack[-1]][1] = True
+        elif ch == ")" and len(stack) > 1:
+            fr = frames[stack.pop()]
+            fr[4] = i
+            b = _JS_BRACE.match(pattern, i + 1) if pattern.startswith("{", i + 1) else None
+            fr[2] = pattern.startswith(("?", "*"), i + 1) or (b is not None and not b[1].strip("0"))
+        i += 1
+    names = {g[1]: k for k, g in enumerate(groups) if g[1] is not None}
+    for ref, is_name, at in refs:
+        if is_name:
+            k = names.get(ref) if named else None
+        else:
+            k = int(ref) - 1 if len(ref) < 8 and int(ref) <= len(groups) else None   # past the count it is an octal or identity escape
+        if k is None:
+            continue
+        g = groups[k][0]
+        if frames[g][4] is None or frames[g][4] > at:
+            return named, True
+        f = g
+        while f >= 0:
+            if frames[f][2] or frames[f][3] or f != g and frames[f][1]:
+                return named, True
+            f = frames[f][0]
+    return named, False
 
 
 def _num(d: str) -> tuple[int, str]:
@@ -207,7 +270,7 @@ def _js_to_re(pattern: str) -> str:
     i, n, in_class = 0, len(pattern), False
     start, neg, pulled, pulled_end, solo_end = 0, False, [], -1, -1   # the open class: its `[` index in out, negation, \s/\S pulled out
     rng = 0   # in a class: 0 no atom to start a range, 1 an atom that can, 2 a range dash awaiting its end
-    named = _JS_NAMED_GROUP.search(pattern) is not None
+    named = _scan_groups(pattern)[0]
     while i < n:
         ch = pattern[i]
         if ch == "\\" and i + 1 < n:
