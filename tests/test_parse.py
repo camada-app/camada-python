@@ -560,3 +560,24 @@ def test_out_of_range_numeric_escape_is_no_backreference() -> None:
 
 def test_deeply_nested_groups_fail_open() -> None:
     assert compile_regex("(?:" * 1000 + "a" + ")" * 1000) is None
+
+
+@pytest.mark.parametrize("pattern", [
+    r"(?:(a{0,2}))((\b\3)*?)?(?i:\1|[^a]*)+?", "(?i:googlebot|bingbot)", "(?-i:a)", "(?s:.)", "(?m:a$)", "(?i-m:a)", "x(?i:a)",
+])
+def test_modifier_group_fails_open(pattern: str) -> None:
+    assert compile_regex(pattern) is None   # V8 mis-evaluates it (camada-all-lsl8)
+
+
+def test_modifier_group_path_regex_fails_open() -> None:
+    from camada.snapshot.parse import compile_path_regex
+    assert compile_path_regex("(?i:a)") is None
+
+
+@pytest.mark.parametrize(("pattern", "text", "hit"), [
+    ("[(?i:a)]", "i", True), (r"\(?i:a\)", "(i:a)", True), ("(?:a)", "a", True),
+    ("(?<n>a)", "a", True), ("(?=a)a", "a", True), ("(?<!a)b", "b", True),
+])
+def test_non_modifier_groups_still_compile(pattern: str, text: str, hit: bool) -> None:
+    rx = compile_regex(pattern)
+    assert rx is not None and bool(rx.search(text)) is hit
