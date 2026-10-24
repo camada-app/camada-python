@@ -475,6 +475,10 @@ def test_run_of_k_openers_is_linear_literal_text() -> None:
     assert rx.search("x") is None
 
 
+def test_run_of_group_openers_is_linear() -> None:
+    compile_regex("(?<" * 20000 + ">\\1")   # None is fine; the name scan stops at the next `<` (was quadratic)
+
+
 @pytest.mark.parametrize(
     ("pattern", "yes", "no"),
     [

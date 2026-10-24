@@ -247,7 +247,7 @@ def _scan_groups(pattern: str) -> tuple[bool, bool]:
                                  lb=pattern.startswith(("?<=", "?<!"), i + 1)))
             stack.append(len(frames) - 1)
             if cap:
-                groups.append((len(frames) - 1, pattern[i + 3 : pattern.find(">", i)] if q else None))
+                groups.append((len(frames) - 1, (gm[1] if (gm := _GROUP_NAME.match(pattern, i)) else None) if q else None))
         elif ch == "|":
             frames[stack[-1]].alt = True
         elif ch == ")" and len(stack) > 1:
@@ -278,6 +278,9 @@ def _scan_groups(pattern: str) -> tuple[bool, bool]:
                 return named, True
             f = fr.parent
     return named, False
+
+
+_GROUP_NAME = re.compile(r"\(\?<([^<>]*)>")   # bounded: each attempt stops at the next `<`
 
 
 def _num(d: str) -> tuple[int, str]:
