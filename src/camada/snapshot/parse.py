@@ -174,9 +174,13 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
         return None
 
 
+_JS_BRACE = re.compile(r"\{[0-9]+(?:,[0-9]*)?\}")
+
+
 def _js_to_re(pattern: str) -> str:
     r"""The JS-only spellings a tenant is likely to author: `(?<name>` -> `(?P<name>`, `[^]` (any
-    char) -> `[\s\S]`, `\cX` -> the control character. Anything else `re` rejects still fails open."""
+    char) -> `[\s\S]`, `\cX` -> the control character, a `{` that is no JS quantifier (`{,3}`,
+    `{ 1}`) -> `\{` (JS reads it as text, `re` as a bound). Anything else `re` rejects still fails open."""
     out: list[str] = []
     i, n, in_class = 0, len(pattern), False
     while i < n:
@@ -201,6 +205,10 @@ def _js_to_re(pattern: str) -> str:
         elif ch == "(" and pattern.startswith("(?<", i) and not pattern.startswith(("(?<=", "(?<!"), i):
             out.append("(?P<")
             i += 3
+            continue
+        elif ch == "{" and not _JS_BRACE.match(pattern, i):
+            out.append("\\{")
+            i += 1
             continue
         out.append(ch)
         i += 1
