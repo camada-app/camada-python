@@ -196,7 +196,7 @@ _JS_DOT = r"[^\n\r\u2028\u2029]"
 _JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
 
 
-_FLAG_HEADER = re.compile(r"\(\?[A-Za-z-]*:")   # modifier flags, bounded: stops at the first non-flag
+_HEADER = re.compile(r"\(\?(?:<[=!]|<[^<>]*>|[A-Za-z-]*:|[=!])")   # a group opener, bounded: lookbehind, name, flags, lookahead
 
 
 @dataclass(slots=True)
@@ -219,8 +219,10 @@ _JS_ESC = re.compile(r"\\(?:c[A-Za-z]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|0[0-7]{0,2
 
 def _min0_at(pattern: str, j: int) -> bool:
     """Does the text at j open a min-0 quantifier (`?`, `*`, `{0}` `{0,}` `{0,m}`)?"""
-    b = _JS_BRACE.match(pattern, j)
-    return pattern.startswith(("?", "*"), j) or (b is not None and not b[1].strip("0"))
+    if pattern.startswith(("?", "*"), j):
+        return True
+    b = _JS_BRACE.match(pattern, j) if pattern.startswith("{", j) else None
+    return b is not None and not b[1].strip("0")
 
 
 def _scan_groups(pattern: str) -> _Scan:
@@ -287,9 +289,7 @@ def _scan_groups(pattern: str) -> _Scan:
                                  lb=pattern.startswith(("?<=", "?<!"), i + 1), la=pattern.startswith("?=", i + 1)))
             stack.append(len(frames) - 1)
             gm = _GROUP_NAME.match(pattern, i) if q and cap else None
-            quiet = gm.end() if gm else i + (4 if pattern.startswith("?<", i + 1) and not cap else 3 if q else 1)
-            if q and (fm := _FLAG_HEADER.match(pattern, i)):   # modifier flags `(?i-m:` are no atoms
-                quiet = fm.end()
+            quiet = m.end() if (m := _HEADER.match(pattern, i)) else i + (3 if q else 1)   # the header is no atom
             if cap:
                 groups.append((len(frames) - 1, (gm[1] if gm else None) if q else None))
         elif ch == "|":
@@ -301,13 +301,13 @@ def _scan_groups(pattern: str) -> _Scan:
             fr = frames[stack.pop()]
             fr.end = i
             b = _JS_BRACE.match(pattern, i + 1)
-            fr.min0 = pattern.startswith(("?", "*"), i + 1) or (b is not None and not b[1].strip("0"))
+            fr.min0 = _min0_at(pattern, i + 1)
             fr.rep = pattern.startswith(("+", "*"), i + 1) or (b is not None and (b[2] and not b[3] or _num(b[3] or b[1]) > (1, "1")))
             fr.nullable = fr.nullable or not fr.solid or fr.neg or fr.lb or fr.la
             if not fr.nullable and not fr.min0:
                 frames[fr.parent].solid = True
         elif ch not in "^$)?*+" and i >= quiet:
-            if b := _JS_BRACE.match(pattern, i):   # a quantifier, no atom
+            if ch == "{" and (b := _JS_BRACE.match(pattern, i)):   # a quantifier, no atom
                 i = b.end()
                 continue
             if not _min0_at(pattern, i + 1):
