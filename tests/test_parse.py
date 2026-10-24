@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from camada.snapshot.match import Matcher, MatchInput
-from camada.snapshot.parse import _JS_BRACE, _js_to_re, _scan_groups, compile_regex, parse_snapshot
+from camada.snapshot.parse import _JS_BRACE, _js_to_re, _scan_groups, compile_path_regex, compile_regex, parse_snapshot
 
 from .conftest import read_bin, read_json
 
@@ -567,17 +567,12 @@ def test_deeply_nested_groups_fail_open() -> None:
 ])
 def test_modifier_group_fails_open(pattern: str) -> None:
     assert compile_regex(pattern) is None   # V8 mis-evaluates it (camada-all-lsl8)
+    assert compile_path_regex(pattern) is None
 
 
-def test_modifier_group_path_regex_fails_open() -> None:
-    from camada.snapshot.parse import compile_path_regex
-    assert compile_path_regex("(?i:a)") is None
-
-
-@pytest.mark.parametrize(("pattern", "text", "hit"), [
-    ("[(?i:a)]", "i", True), (r"\(?i:a\)", "(i:a)", True), ("(?:a)", "a", True),
-    ("(?<n>a)", "a", True), ("(?=a)a", "a", True), ("(?<!a)b", "b", True),
+@pytest.mark.parametrize(("pattern", "text"), [
+    ("[(?i:a)]", "i"), (r"\(?i:a\)", "(i:a)"), ("(?:a)", "a"), ("(?<n>a)", "a"), ("(?=a)a", "a"), ("(?<!a)b", "b"),
 ])
-def test_non_modifier_groups_still_compile(pattern: str, text: str, hit: bool) -> None:
+def test_non_modifier_groups_still_compile(pattern: str, text: str) -> None:
     rx = compile_regex(pattern)
-    assert rx is not None and bool(rx.search(text)) is hit
+    assert rx is not None and rx.search(text)
