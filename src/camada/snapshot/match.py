@@ -12,13 +12,14 @@
 # honest enforcement scope (fail open, never guess).
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import regex
+
 from ..ipparse import Words, parse_ip4, parse_ip6
 from .parse import CompiledRule, RangeSet, RuleRequest, Snapshot, in_range4, in_range6
-from .paths import PathForms, path_forms, path_hit, prefixed
+from .paths import PathForms, path_forms, path_hit, prefixed, regex_hit, request_regex_budget
 
 
 @dataclass(slots=True)
@@ -44,8 +45,8 @@ class MatchResult:
     version: str | None = None
 
 
-def _path_in(exact: frozenset[str], prefix: frozenset[str], regex: list[re.Pattern[str]], p: str) -> bool:
-    return p in exact or (bool(prefix) and prefixed(prefix, p)) or any(rx.search(p) for rx in regex)
+def _path_in(exact: frozenset[str], prefix: frozenset[str], pats: list[regex.Pattern[str]], p: str) -> bool:
+    return p in exact or (bool(prefix) and prefixed(prefix, p)) or any(regex_hit(rx, p, False) for rx in pats)
 
 
 def _rule_result(rule: CompiledRule, version: str) -> MatchResult:
@@ -172,12 +173,13 @@ class Matcher:
         forms = path_forms(i.path)   # (raw, lit, full): see snapshot/paths.py
         if s.rules:
             r = RuleRequest(n4=n4, ip6=w, asn=i.asn, country=i.country, tlsx=i.tlsx, paths=forms, ua=i.ua, header=i.header)
-            for rule in s.rules:   # the order IS the precedence (§A4): first match wins
-                for cond in rule.conds:
-                    if not cond(r):
-                        break
-                else:
-                    return _rule_result(rule, s.version)
+            with request_regex_budget():
+                for rule in s.rules:   # the order IS the precedence (§A4): first match wins
+                    for cond in rule.conds:
+                        if not cond(r):
+                            break
+                    else:
+                        return _rule_result(rule, s.version)
         reason = self._side(s.allow, i, n4, w, forms, False)
         if reason:
             return MatchResult(allowed=True, reason=reason, version=s.version)
