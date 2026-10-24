@@ -176,7 +176,8 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
         return None
 
 
-_JS_BRACE = re.compile(r"\{[0-9]+(?:,[0-9]*)?\}")
+_JS_BRACE = re.compile(r"\{([0-9]+)(,)?([0-9]*)\}")
+_RE_MAX_BOUND = 4294967294   # sre's MAXREPEAT - 1 (no `_sre` stub for mypy); a larger repeat number is an OverflowError
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
@@ -288,9 +289,20 @@ def _js_to_re(pattern: str) -> str:
             out.append("\\Z")
             i += 1
             continue
-        elif ch == "{" and not _JS_BRACE.match(pattern, i):
-            out.append("\\{")
-            i += 1
+        elif ch == "{":
+            brace = _JS_BRACE.match(pattern, i)
+            if not brace:
+                out.append("\\{")
+                i += 1
+                continue
+            lo, comma, hi = brace.groups()
+            if int(lo) > _RE_MAX_BOUND or (hi and int(hi) > _RE_MAX_BOUND):
+                lo = str(min(int(lo), _RE_MAX_BOUND))
+                # an upper bound past it never binds a real input, so drop it
+                out.append(f"{{{lo}}}" if not comma else f"{{{lo},{hi if hi and int(hi) <= _RE_MAX_BOUND else ''}}}")
+            else:
+                out.append(brace.group())
+            i = brace.end()
             continue
         out.append(ch)
         i += 1
