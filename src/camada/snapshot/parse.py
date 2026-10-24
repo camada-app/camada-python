@@ -178,13 +178,14 @@ _JS_BRACE = re.compile(r"\{[0-9]+(?:,[0-9]*)?\}")
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[\s\S])|[\s\S]")   # one class atom
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
+_JS_BACKREF = re.compile(r"\\k<([^>]+)>")
 _JS_WS = r"\t-\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"   # JS \s; re.ASCII's is ASCII-only
 _JS_DOT = r"[^\n\r\u2028\u2029]"
 _JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
 
 
 def _js_to_re(pattern: str) -> str:
-    r"""The JS-only spellings a tenant is likely to author: `(?<name>` -> `(?P<name>`, `[^]` (any
+    r"""The JS-only spellings a tenant is likely to author: `(?<name>` -> `(?P<name>`, `\k<name>` -> `(?P=name)`, `[^]` (any
     char) -> `[\s\S]`, `\cX` -> the control character, a `{` that is no JS quantifier (`{,3}`,
     `{ 1}`) -> `\{` (JS reads it as text, `re` as a bound), and `$` outside a class -> `\Z` (JS `$` never
     matches before a trailing newline). `\<letter>` outside JS's escape set is the bare letter, as JS reads it
@@ -211,6 +212,10 @@ def _js_to_re(pattern: str) -> str:
                     out.append(_JS_SPACE[nxt])
                 i += 2
                 continue
+            if nxt == "k" and named and not in_class and (m := _JS_BACKREF.match(pattern, i)):   # `\k<name>` -> `(?P=name)`
+                out.append(f"(?P={m[1]})")
+                i = m.end()
+                continue
             kept = (not (nxt.isascii() and nxt.isalpha()) or _JS_ESCAPE.match(pattern, i + 1) is not None
                     or (nxt == "B" and not in_class) or (nxt == "k" and named) or (nxt == "c" and in_class))
             out.append(pattern[i : i + 2] if kept else "\\\\c" if nxt == "c" else nxt)   # JS reads `\c` before a non-letter as text
@@ -222,7 +227,7 @@ def _js_to_re(pattern: str) -> str:
                 if dash and i == pulled_end:   # JS reads the atom after that dash as standalone: a dash right after it is text too
                     m = _JS_ATOM.match(pattern, i + 1)
                     solo_end = m.end() if m else i + 2   # the pattern always matches: a dash is followed by an atom
-                out.append("\\-" if dash else ch)
+                out.append("\\-" if dash else "\\[" if ch == "[" else ch)   # a literal `[` would read as a nested set
             elif len(set(pulled)) == 2:   # \s and \S together: any char
                 out[start:] = ["(?!)" if neg else "[\\s\\S]"]
                 in_class = False
