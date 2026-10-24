@@ -373,7 +373,7 @@ def test_js_dot_empty_class_and_unicode_space(pattern: str, text: str, expect: b
         ("^(?:a|){99999999999}$", "", True), ("^(?:a?){99999999999}$", "", True),
         ("^a{1," + "9" * 5000 + "}$", "a", True), ("^a{70000}$", "a", False), ("^a{65535}$", "a", False),
         ("^a{" + "0" * 5000 + "1}$", "a", True), ("^a{1," + "0" * 5000 + "2}$", "aa", True),
-        ("^a{2049}$", "a" * 2049, True), ("^a{2049}$", "a" * 2048, False),
+        ("^a{65535}$", "a" * 65535, True), ("^a{70000}$", "a" * 65535, True),
     ],
 )
 def test_quantifier_bound_above_limit_is_clamped(pattern: str, text: str, expect: bool) -> None:
@@ -382,8 +382,8 @@ def test_quantifier_bound_above_limit_is_clamped(pattern: str, text: str, expect
 
 
 def test_quantifier_bound_emits_clamped_limit() -> None:
-    assert "{2049}" in _js_to_re("^(?:a|){99999999999}$")
-    assert "{2049}" in _js_to_re("^a{2049}$") and "{2050}" not in _js_to_re("^a{2050}$")
+    assert "{65535}" in _js_to_re("^(?:a|){99999999999}$")
+    assert "{65535}" in _js_to_re("^a{65535}$") and "{65536}" not in _js_to_re("^a{65536}$")
 
 
 @pytest.mark.parametrize("pattern", ["a{70000,65535}", "a{99999999999,99999999998}", "a{3,2}", "a{" + "0" * 5000 + "3,2}"])
