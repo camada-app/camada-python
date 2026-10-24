@@ -396,6 +396,10 @@ def test_quantifier_brace_without_close_does_not_backtrack() -> None:
     assert _JS_BRACE.match("{" + "1" * 20000, 0) is None
 
 
+def test_regex_module_errors_fail_open() -> None:
+    assert compile_regex("a(?V1)b") is None   # regex raised KeyError here
+
+
 @pytest.mark.parametrize("pattern", [r"[a\s-", r"[\s-"])
 def test_unterminated_class_after_s_dash_fails_open(pattern: str) -> None:
     assert compile_regex(pattern) is None

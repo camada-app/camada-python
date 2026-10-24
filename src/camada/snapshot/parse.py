@@ -30,8 +30,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import regex
+
 from ..ipparse import Words
-from .paths import PathForms, canon_path, dir_key, over_cap, path_hit, path_pred
+from .paths import PathForms, canon_path, dir_key, over_cap, path_hit, path_pred, regex_hit
 
 Bits = memoryview   # a uint32 view: memoryview.cast('I')
 
@@ -110,7 +112,7 @@ class Snapshot:
     tls: frozenset[str]
     paths_exact: frozenset[str]
     paths_prefix: frozenset[str]
-    paths_regex: list[re.Pattern[str]]
+    paths_regex: list[regex.Pattern[str]]
     allow: RangeSet
     challenge: RangeSet
     rules: list[CompiledRule] = field(default_factory=list)   # v5 only; empty on v3/v4, and the matcher then skips them
@@ -164,20 +166,20 @@ def in_range6(r: Bits, n: int, w: Words) -> bool:
     return _cmp_words(r, o, w) <= 0 and _cmp_words(r, o + 4, w) >= 0
 
 
-def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
+def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
     r"""A pattern this runtime rejects never matches, and never throws (fail open). Patterns are
     authored as JS regexes (the analyst validates them with `new RegExp`), so the JS spellings
-    `re` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them.
+    `regex` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them.
     An astral char is one code point here and two UTF-16 units in JS, so `.`, `[^a]` and `\S` count it
     once (an accepted gap, camada-all-vuvo). A backreference to a group that may not have captured on that pass
     reads empty in JS and fails in `re`: _scan_groups marks it for a translation that reads empty too, or (a repeating
-    ancestor, where JS resets the capture per iteration) fails open."""
+    ancestor, where JS resets the capture per iteration) fails open. Callers pass regex flags (regex.IGNORECASE), not re's."""
     try:
         scan = _scan_groups(pattern)
         if scan[1]:
             return None
-        return re.compile(_js_to_re(pattern, scan), re.ASCII | flags)
-    except (re.error, TypeError, ValueError, OverflowError, RecursionError):   # RecursionError: deeply nested groups
+        return regex.compile(_js_to_re(pattern, scan), regex.ASCII | regex.V0 | flags)
+    except Exception:   # regex.error, RecursionError (deeply nested groups), and what regex leaks, e.g. KeyError on `(?V1)`
         return None
 
 
@@ -456,9 +458,9 @@ def _field_value(f: str, r: RuleRequest) -> str | None:
     return None   # an entity-plane field (bot.verified, rule): never true here
 
 
-def compile_path_regex(pattern: str) -> re.Pattern[str] | None:
+def compile_path_regex(pattern: str) -> regex.Pattern[str] | None:
     """A path regex runs case-insensitively (§D3 "Path matching")."""
-    return compile_regex(pattern, re.IGNORECASE)
+    return compile_regex(pattern, regex.IGNORECASE)
 
 
 def _compile_cond(c: dict[str, Any], sets: list[tuple[Bits, Bits]], deny: bool = True) -> RuleCond:
@@ -517,7 +519,7 @@ def _compile_cond(c: dict[str, Any], sets: list[tuple[Bits, Bits]], deny: bool =
                 return False
             # regex-cap-sdk S1: never truncate (a needle pushed past the cap would fail a deny rule open)
             def f(s: str) -> bool:
-                return deny if over_cap(s) else rx.search(s) is not None
+                return deny if over_cap(s) else regex_hit(rx, s, deny)
 
             if not strip:
                 return f(v)
