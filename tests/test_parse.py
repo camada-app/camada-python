@@ -483,6 +483,9 @@ def test_named_mode_needs_a_real_group(pattern: str, text: str, hit: bool) -> No
         r"(é?)+x\1", r"([a]?)+x\1", r"(a{0,2})+x\1", r"(?:(a)|)+x\1", r"((?=a))+x\1",                  # match empty keeps JS's capture
         r"((?i:a?))+x\1", r"((?i-m:a?))+x\1", r"((?-i:a?))+x\1", r"((?m:b*))+x\1",   # modifier headers are no atoms
         r"(?:(?i:(b*)))+x\1", r"(?i:(b*))+x\1", r"(?<m>(?i:b*))+x\k<m>",
+        r"(b*){2,3}x\1", r"(b*){2,}x\1", r"(?:(b*){2})+x\1", r"(?:((?:b+|(?=x))){2}c?)+x\1",   # iterations past the minimum
+        r"((?:c?)*){2}x\1", r"((?:c?)+){2}x\1", r"((c*)*){2}x\1", r"((?:(?:c?){2})*){2}x\1",   # an exact count over an inner optional
+        r"(((c?){2,}c?)*b*){2}x\1", r"(((b|)(c?){2,02})*){2}(?:b+|(?=x))\1",                   # nullable repeat: `regex` misreads it
     ],
 )
 def test_backreference_to_a_maybe_unset_group_fails_open(pattern: str) -> None:
@@ -556,6 +559,8 @@ def test_deep_nesting_with_many_references_scans_in_linear_time(core: str) -> No
         (r"(?:(b)c?)+x\1", ["bcbxb"], ["bcbxc"]),
         (r"(a{1,2})+x\1", ["aaxa"], ["ax"]),
         (r"(\x41)+x\1", ["AxA"], ["Ax"]),
+        (r"(b*){2}x\1", ["bbx", "bxb", "bx"], ["bxbb"]),   # an exact count has no optional iteration
+        (r"(b*){2,2}x\1", ["bbx", "bxb"], ["bxbb"]), (r"(?:(b*)){3}x\1", ["bbx"], []), (r"(b*){3}x\1", ["bxb", "bbxbb"], ["xb"]), (r"(a*){2}x\1", ["axa"], ["axb"]),
         (r"(?:(a?)\1)+", ["aa", ""], ["a"]),   # the reference sits inside the repeat: it reads its own iteration
     ],
 )
