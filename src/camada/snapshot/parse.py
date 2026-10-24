@@ -278,6 +278,8 @@ def _scan_groups(pattern: str) -> _Scan:
                 return named, True, {}
         else:
             k = int(ref) - 1 if len(ref) < 8 and int(ref) <= len(groups) else None   # past the count it is an octal or identity escape
+            if k is None and len(ref) > 2 and 10 <= int(ref[:2]) <= len(groups) and not _OCTAL3.match(ref):
+                return named, True, {}   # JS reads `\108` as octal `\10` + "8", `re` as group 10 + "8"
         if k is None:
             continue
         g = groups[k][0]
@@ -294,6 +296,7 @@ def _scan_groups(pattern: str) -> _Scan:
     return named, False, marks
 
 
+_OCTAL3 = re.compile(r"[0-3][0-7][0-7]")   # `re` reads three octal digits as an octal escape, as JS does
 _GROUP_NAME = re.compile(r"\(\?<([^<>]*)>")   # bounded: each attempt stops at the next `<`
 
 
