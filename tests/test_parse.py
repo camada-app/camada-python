@@ -113,6 +113,14 @@ def test_two_ip_conditions_consume_two_section_pairs_in_order() -> None:
     assert m.match(MatchInput(ip="10.0.0.2")).rule is None      # not in the first
 
 
+def test_path_regex_case_folds_ascii_only() -> None:
+    # accepted gap (camada-all-6oof): JS /i also folds é/É, regex.ASCII does not; README documents it
+    rx = compile_path_regex("^é$")
+    assert rx is not None and rx.search("É") is None and rx.search("é") is not None
+    rx = compile_path_regex("^a$")
+    assert rx is not None and rx.search("A") is not None
+
+
 def test_js_regex_spellings_are_translated() -> None:
     m = rules_snapshot([{"id": "ver", "action": "block", "conds": [{"f": "path", "op": "matches", "v": r"^/api/(?<ver>v\d+)/"}]}])
     assert m.match(MatchInput(path="/api/v2/dump")).rule == "ver"
