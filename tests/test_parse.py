@@ -342,6 +342,8 @@ def test_s5_raw_over_cap_but_stripped_under_cap_deny_hits_skip_misses() -> None:
         (r"^[a\s]$", " ", True), (r"^[a\s]$", "a", True), (r"^[a\s]$", "b", False),
         (r"^[^a\s]$", " ", False), (r"^[^a\s]$", "b", True), (r"^[^a\s]$", "a", False),
         (r"^[a-\sz]$", "-", True), (r"^[a-\sz]$", "m", False), (r"^[a\s-z]$", "-", True), (r"^[a\s-z]$", "m", False),
+        (r"^[\s-\cA-z]$", "b", False), (r"^[\s-\101-z]$", "b", False), (r"^[\s-\cA-z]$", "-", True),
+        (r"^[\s\S]$", "\n", True), (r"^[^\s\S]$", "a", False),
         (r"^[\s-a-z]$", "b", False), (r"^[\s-a-z]$", "-", True), (r"^[\s-a-z]$", "z", True),
         (r"^[\s^]$", "^", True), (r"^[\s^]$", " ", True), (r"^[\S]$", " ", False), (r"^[\S1]$", "1", True),
     ],
