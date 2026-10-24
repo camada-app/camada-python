@@ -174,7 +174,7 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
         return None
 
 
-_JS_BRACE = re.compile(r"\{\d+(?:,\d*)?\}")
+_JS_BRACE = re.compile(r"\{[0-9]+(?:,[0-9]*)?\}")
 
 
 def _js_to_re(pattern: str) -> str:
