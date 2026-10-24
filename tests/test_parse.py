@@ -139,6 +139,30 @@ def test_non_js_brace_is_text_not_a_bound(pattern: str, text: str, not_text: str
     assert not_text is None or not rx.fullmatch(not_text)
 
 
+@pytest.mark.parametrize(
+    ("pattern", "text", "expect"),
+    [
+        ("^admin$", "admin\n", False), ("^admin$", "admin", True), ("^a[$]$", "a$", True), (r"^a\$$", "a$", True),
+        (r"^\p{L}$", "p{L}", True), (r"^\p{L}$", "A", False),
+        (r"^\x{41}$", "A", False), (r"^\x{2}$", "xx", True),
+        (r"^\u{41}$", "A", False), (r"^\u{2}$", "uu", True),
+        (r"^\o{101}$", "A", False), (r"^\o{2}$", "oo", True),
+        (r"^\g{1}$", "g", True), (r"^\g{1}$", "gg", False),
+        (r"^\Qa.b$", "Qa.b", True), (r"^\Qa.b$", "Qaxb", True),
+        (r"^a{2}?$", "", False), (r"^a{2}?$", "aa", True),
+        (r"^\A\z$", "Az", True), (r"^\e$", "e", True), (r"^\h$", "h", True), (r"^\N$", "N", True),
+        (r"^\x4$", "x4", True), (r"^\x41$", "A", True), ("^A$", "A", True),
+        (r"^\u0041$", "A", True), (r"^\S[\s\S]\x4", "a b\x04", False), (r"^\S\x4", "ax4", True), (r"\u41", "u41", True), (r"^\k$", "k", True),
+        (r"^[\B]$", "B", True), (r"^[\p]$", "p", True), (r"^[\b]$", "\b", True),
+        (r"^\d\w\s\b", "1a ", False), (r"^\d\w\s", "1a ", True),
+        (r"^\c1$", "\\c1", True), (r"^\c$", "\\c", True), (r"^\v$", "\v", True), (r"^\v$", "\n", False),
+    ],
+)
+def test_js_identity_escapes_and_dollar(pattern: str, text: str, expect: bool) -> None:
+    rx = compile_regex(pattern)
+    assert rx is not None and (rx.search(text) is not None) is expect
+
+
 def test_non_js_brace_does_not_blow_up_the_search() -> None:
     import time
 
