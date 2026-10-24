@@ -461,10 +461,18 @@ def test_named_mode_needs_a_real_group(pattern: str, text: str, hit: bool) -> No
         r"^(?:(?<n>a)|b)+\k<n>$", r"(?<q>[\"'])?x\k<q>", r"\1(a)", r"(a\1)", r"(?:\1(a))+", r"(?:(a)|b)\1", r"(a)?x\1",
         r"(a)*x\1", r"(a){0,2}x\1", r"(a){00}x\1", r"(a)??x\1", r"(?!(a))\1b", r"(a)|b\1", r"(?:(a)\1|b)", r"(?:(a))?\1",
         r"\k<n>(?<n>a)", r"(?<!(a))\1",
+        r"(?<=(a)\1)b", r"(?<=([ab]){2})\1", r"(?<=(a))\1", r"(?<=\1(a))b", r"(?<m>)|\k<n>", r"a|\k<n>(?<n>b)",
     ],
 )
 def test_backreference_to_a_maybe_unset_group_fails_open(pattern: str) -> None:
     assert compile_regex(pattern) is None
+
+
+def test_run_of_k_openers_is_linear_literal_text() -> None:
+    # no named group: `\k<` is the letter k, so the text is literal; each name scan stops at the next `<` (was quadratic)
+    assert (rx := compile_regex("\\k<" * 20000 + ">")) is not None
+    assert compile_regex("\\k<" * 3 + ">").search("k<k<k<>") is not None
+    assert rx.search("x") is None
 
 
 @pytest.mark.parametrize(
