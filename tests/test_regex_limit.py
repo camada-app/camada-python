@@ -69,3 +69,31 @@ def test_no_walk_only_per_match_limit() -> None:
         assert paths.regex_hit(rx, "a" * 2048, True) is True
         assert paths.regex_hit(rx, "a" * 2048, False) is False
     assert getattr(paths._budget, "left", None) is None
+
+
+MEMORY_ERROR_PATTERN = r"^(?:(?=(?<m>b*a){2,}(?:b+(?=\1b*))+(?=[ab]?b*))+?(?=\1\b[b]*)\1)$"   # camada-all-nrdh
+
+
+@pytest.mark.parametrize("exc", [MemoryError, RuntimeError, RecursionError])
+def test_regex_runtime_error_answers_on_error(exc: type[BaseException]) -> None:
+    class Boom:
+        def search(self, s: str, timeout: float) -> None:
+            raise exc()
+
+    assert paths.regex_hit(Boom(), "aaba", True) is True  # type: ignore[arg-type]
+    assert paths.regex_hit(Boom(), "aaba", False) is False  # type: ignore[arg-type]
+
+
+def test_memory_error_pattern_answers_on_error() -> None:
+    import regex
+
+    rx = regex.compile(MEMORY_ERROR_PATTERN)
+    with pytest.raises(MemoryError) as err:   # the unbounded search raises; the 50 ms limit usually times out first
+        rx.search("aaba")
+
+    class Unbounded:   # regex_hit's search without the limit: the failure mode the ticket saw (replays the one real error)
+        def search(self, s: str, timeout: float) -> object:
+            raise err.value
+
+    assert paths.regex_hit(Unbounded(), "aaba", True) is True  # type: ignore[arg-type]
+    assert paths.regex_hit(Unbounded(), "aaba", False) is False  # type: ignore[arg-type]
