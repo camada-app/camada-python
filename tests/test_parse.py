@@ -393,4 +393,4 @@ def test_doubled_class_operator_chars_are_members_without_a_warning(pattern: str
         warnings.simplefilter("error")
         rx = compile_regex(pattern)
     assert rx is not None
-    assert "".join(chr(c) for c in range(32, 127) if rx.fullmatch(chr(c))) == "".join(sorted(matches))
+    assert "".join(chr(c) for c in range(127) if rx.fullmatch(chr(c))) == "".join(sorted(matches))
