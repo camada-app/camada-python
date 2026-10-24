@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..ipparse import Words
-from .paths import MAX_MATCH_INPUT, PathForms, canon_path, dir_key, over_cap, path_hit, path_pred
+from .paths import PathForms, canon_path, dir_key, over_cap, path_hit, path_pred
 
 Bits = memoryview   # a uint32 view: memoryview.cast('I')
 
@@ -177,9 +177,7 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
 
 
 _JS_BRACE = re.compile(r"\{([0-9]+)(?:(,)([0-9]*))?\}")   # optional group: no quadratic backtrack on `{11...` sans `}`
-# every regex only runs on values of at most MAX_MATCH_INPUT units (over_cap), so no input tells a bound above the cap from cap+1;
-# clamping there keeps an empty-matching group like `(?:a|){99999999999}` cheap
-_RE_MAX_BOUND = MAX_MATCH_INPUT + 1
+_RE_MAX_BOUND = 65535   # same as camada-php: above any path or header a request carries (pathsRegex runs uncapped)
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
