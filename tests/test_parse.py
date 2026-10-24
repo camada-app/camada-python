@@ -470,6 +470,8 @@ def test_named_mode_needs_a_real_group(pattern: str, text: str, hit: bool) -> No
         r"(?=(a??)?)\1a", r"(?=(?:a??)?(b)?)a\1", r"(?=(a*?){0,1})[ab]*\1", r"(?=x(?<n>a??(x)*|){0,1})x\k<n>",   # a conditional reference into a lookahead
         "(a)?" * 100 + r"x\100",   # `re` reads \100 as octal
         "(a)" * 150 + r"\150", "(a)" * 100 + r"\100",   # same for a group that always captured
+        r"(b*)+x\1", r"(b|)+x\1", r"(a?)+x\1", r"\1(b*)+x\1", r"(?:(b*))+x\1", r"(?<m>b*)+x\k<m>", r"(\x41?)+x\1",   # a repeat that can
+        r"(é?)+x\1", r"([a]?)+x\1", r"(a{0,2})+x\1", r"(?:(a)|)+x\1", r"((?=a))+x\1",                  # match empty keeps JS's capture
     ],
 )
 def test_backreference_to_a_maybe_unset_group_fails_open(pattern: str) -> None:
@@ -537,6 +539,11 @@ def test_deep_nesting_with_many_references_scans_in_linear_time(core: str) -> No
         (r"(?<n>a)\k<n>", ["aa"], ["ab"]),
         (r"(a){1,2}\1", ["aaa"], ["a"]),
         (r"[\1](a)", ["\x01a"], ["aa", "1a"]),   # class escape, no backreference
+        (r"(\w)+\1", ["abb"], ["ab"]),   # a repeat that cannot match empty
+        (r"(?:(b)c?)+x\1", ["bcbxb"], ["bcbxc"]),
+        (r"(a{1,2})+x\1", ["aaxa"], ["ax"]),
+        (r"(\x41)+x\1", ["AxA"], ["Ax"]),
+        (r"(?:(a?)\1)+", ["aa", ""], ["a"]),   # the reference sits inside the repeat: it reads its own iteration
     ],
 )
 def test_backreference_to_a_captured_group_still_compiles(pattern: str, yes: list[str], no: list[str]) -> None:
