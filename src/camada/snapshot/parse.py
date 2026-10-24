@@ -175,6 +175,7 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
     reads empty in JS and fails in `re`: _scan_groups marks it for a translation that reads empty too, or (a repeating
     ancestor, where JS resets the capture per iteration) fails open.
     A `(?` or `(*` group JS lacks (`(?i)`, `(?>`, `(?#`, `(*FAIL)`, ...) fails open: JS rejects it or V8 mis-evaluates it (camada-all-lsl8).
+    A repeat of 1000+ of an empty group, `b(){65535}c`, fails open: `regex` takes minutes to compile it (camada-all-fe5v).
     Callers pass regex flags (regex.IGNORECASE), not re's."""
     try:
         scan = _scan_groups(pattern)
@@ -190,6 +191,7 @@ _RE_MAX_BOUND = 65535   # same as camada-php: above any path or header a request
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
 _JS_NON_GROUP = re.compile(r"\((?:\*|\?(?![:=!<]))")   # a `(?` or `(*` opening none of the JS forms `(?:` `(?=` `(?!` `(?<`
+_JS_GROUP_SHELL = re.compile(r"\((?:\?(?::|<?=|<[^<>=!][^<>]*>))?|\)|[?*+]|\{[0-9]+(?:,[0-9]*)?\}")   # an empty group's parts
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
 _JS_BACKREF = re.compile(r"\\k<([^<>]+)>")   # a JS name holds no `<` or `>`: linear on a run of `\k<`
 _JS_REF = re.compile(r"\\(?:k<([^<>]+)>|([1-9][0-9]*))")   # a named or numbered backreference: group 1 or 2
@@ -376,6 +378,8 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
     start, neg, pulled, pulled_end, solo_end = 0, False, [], -1, -1   # the open class: its `[` index in out, negation, \s/\S pulled out
     rng = 0   # in a class: 0 no atom to start a range, 1 an atom that can, 2 a range dash awaiting its end
     named, _, marks = scan or _scan_groups(pattern)
+    opens: list[int] = []   # the unclosed `(` indices outside a class
+    last_group = (-1, -1)   # the (open, close) indices of the group that closed last
     while i < n:
         ch = pattern[i]
         if ch == "\\" and i + 1 < n:
@@ -467,9 +471,14 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
         if ch == "(" and _JS_NON_GROUP.match(pattern, i):
             raise ValueError("non-JS group")   # compile_regex fails open: JS rejects it or the engine gives it a meaning (camada-all-lsl8)
         if ch == "(" and _JS_NAMED_GROUP.match(pattern, i):
+            opens.append(i)
             out.append("(?P<")
             i += 3
             continue
+        elif ch == "(":
+            opens.append(i)
+        elif ch == ")" and opens:
+            last_group = (opens.pop(), i)
         elif ch == "$":
             out.append("\\Z")
             i += 1
@@ -477,6 +486,8 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
         elif ch == "{" and (brace := _JS_BRACE.match(pattern, i)):
             lo, comma, hi = brace.groups()
             lo_n, hi_n = _num(lo), (_num(hi) if hi else None)
+            if len(lo_n[1]) > 3 and last_group[1] == i - 1 and not _JS_GROUP_SHELL.sub("", pattern[last_group[0] : i]):
+                raise ValueError("huge repeat of an empty group")   # fail open: `regex` compiles `b(){65535}c` in minutes (camada-all-fe5v)
             if hi_n is not None and lo_n > hi_n:
                 out.append(brace[0])   # m > n is a JS SyntaxError: leave it so re rejects it too
             else:
