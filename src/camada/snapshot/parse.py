@@ -317,7 +317,8 @@ def _scan_groups(pattern: str) -> _Scan:
             b = _JS_BRACE.match(pattern, i + 1)
             fr.min0 = _min0_at(pattern, i + 1)
             fr.rep = pattern.startswith(("+", "*"), i + 1) or (b is not None and (b[2] and not b[3] or _num(b[3] or b[1]) > (1, "1")))
-            fr.opt = fr.rep and (b is None or bool(b[2]) and (not b[3] or _num(b[3]) != _num(b[1])))   # not `{n}` / `{n,n}`
+            fr.opt = fr.rep and (b is None or bool(b[2]) and (not b[3] or _num(b[3]) != _num(b[1])) or fr.holds)   # not `{n}` / `{n,n}`,
+            # unless a frame inside holds an optional nullable repeat: `regex` misreads that under an exact count
             fr.nullable = fr.nullable or not fr.solid or fr.neg or fr.lb or fr.la
             fr.holds |= (fr.min0 or fr.rep) and fr.nullable
             frames[fr.parent].holds |= fr.holds
