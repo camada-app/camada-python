@@ -203,10 +203,11 @@ def _js_to_re(pattern: str) -> str:
         ch = pattern[i]
         if ch == "\\" and i + 1 < n:
             nxt = pattern[i + 1]
-            if nxt == "c" and i + 2 < n and pattern[i + 2].isalpha():
+            # Annex B: inside a class `\c` also takes a digit or `_`
+            if nxt == "c" and i + 2 < n and (pattern[i + 2].isalpha() or in_class and pattern[i + 2] in "0123456789_"):
                 if in_class:
                     rng = 0 if rng == 2 else 1
-                out.append(re.escape(chr(ord(pattern[i + 2].upper()) - 64)))
+                out.append(re.escape(chr(ord(pattern[i + 2].upper()) % 32)))
                 i += 3
                 continue
             if nxt in "sS":
@@ -223,7 +224,7 @@ def _js_to_re(pattern: str) -> str:
                 i = m.end()
                 continue
             kept = (not (nxt.isascii() and nxt.isalpha()) or _JS_ESCAPE.match(pattern, i + 1) is not None
-                    or (nxt == "B" and not in_class) or (nxt == "k" and named) or (nxt == "c" and in_class))
+                    or (nxt == "B" and not in_class) or (nxt == "k" and named))
             rng = 0 if rng == 2 else 1
             out.append(pattern[i : i + 2] if kept else "\\\\c" if nxt == "c" else nxt)   # JS reads `\c` before a non-letter as text
             i += 2
