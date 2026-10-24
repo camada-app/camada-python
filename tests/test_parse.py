@@ -463,6 +463,7 @@ def test_named_mode_needs_a_real_group(pattern: str, text: str, hit: bool) -> No
         r"(?<=(a)\1)b", r"(?<=([ab]){2})\1", r"(?<=(a))\1", r"(?<=\1(a))b", r"(?<m>)|\k<n>",
         r"(a)*\1", r"(a)*x\1", r"(a){0,2}x\1", r"(b*)*x\1", r"(b|)*x\1", r"(a?){0,2}x\1", r"(?<m>b*)*x\k<m>", r"(b*)*\1",   # the group repeats
         r"(?:(?=(a)))?a\1", r"(?=(a))?a\1", r"(?=(a)){0,1}a\1", r"(?<a>x)(?=(?<b>y))?y\k<b>", r"(?:(?=(a))x?)?a\1",   # empty iteration keeps a capture
+        r"(?=(a??)?)\1a", r"(?=(?:a??)?(b)?)a\1", r"(?=(a*?){0,1})[ab]*\1", r"(?=x(?<n>a??(x)*|){0,1})x\k<n>",   # a conditional reference into a lookahead
         "(a)?" * 100 + r"x\100",   # `re` reads \100 as octal
     ],
 )
