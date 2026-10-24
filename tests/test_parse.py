@@ -328,3 +328,29 @@ def test_s5_raw_over_cap_but_stripped_under_cap_deny_hits_skip_misses() -> None:
     ])
     assert ms.match(MatchInput(ua="a" * 2048)).rule == "s"
     assert ms.match(MatchInput(ua=v)).rule == "b"
+
+
+@pytest.mark.parametrize(
+    ("pattern", "text", "expect"),
+    [
+        ("^.$", "\r", False), ("^.$", " ", False), ("^.$", " ", False), ("^.$", "\n", False), ("^.$", "a", True),
+        (r"^\.$", ".", True), ("^[.]$", ".", True), ("^[.]$", "a", False),
+        ("[]a]", "a", False), ("[]a]", "]", False), ("[]a]", "a]", False),
+        ("^[^]x]$", "qx]", True), ("a[]*b", "ab", True), ("a[]b", "ab", False), ("^[^]$", "\n", True),
+        (r"^\s$", " ", True), (r"^\s$", "﻿", True), (r"^\s$", " ", True), (r"^\s$", "a", False),
+        (r"^\S$", " ", False), (r"^\S$", "　", False), (r"^\S$", "a", True),
+        (r"^[a\s]$", " ", True), (r"^[a\s]$", "a", True), (r"^[a\s]$", "b", False),
+        (r"^[^a\s]$", " ", False), (r"^[^a\s]$", "b", True), (r"^[^a\s]$", "a", False),
+        (r"^[a-\sz]$", "-", True), (r"^[a-\sz]$", "m", False), (r"^[a\s-z]$", "-", True), (r"^[a\s-z]$", "m", False),
+        (r"^[\s-a-z]$", "b", False), (r"^[\s-a-z]$", "-", True), (r"^[\s-a-z]$", "z", True),
+        (r"^[\s^]$", "^", True), (r"^[\s^]$", " ", True), (r"^[\S]$", " ", False), (r"^[\S1]$", "1", True),
+    ],
+)
+def test_js_dot_empty_class_and_unicode_space(pattern: str, text: str, expect: bool) -> None:
+    rx = compile_regex(pattern)
+    assert rx is not None and (rx.search(text) is not None) is expect
+
+
+def test_js_class_with_space_does_not_backtrack_exponentially() -> None:
+    rx = compile_regex(r"^[ \s]+x")
+    assert rx is not None and rx.search(" " * 3000) is None
