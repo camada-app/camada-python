@@ -347,11 +347,17 @@ def test_s5_raw_over_cap_but_stripped_under_cap_deny_hits_skip_misses() -> None:
         (r"^[\s-a-z]$", "b", False), (r"^[\s-a-z]$", "-", True), (r"^[\s-a-z]$", "z", True),
         (r"^[\s^]$", "^", True), (r"^[\s^]$", " ", True), (r"^[\S]$", " ", False), (r"^[\S1]$", "1", True),
         (r"^\s$", " ", True), (r"^\S$", " ", False),
+        (r"^\s$", "\u2028", True), (r"^\S$", "\u2028", False),
     ],
 )
 def test_js_dot_empty_class_and_unicode_space(pattern: str, text: str, expect: bool) -> None:
     rx = compile_regex(pattern)
     assert rx is not None and (rx.search(text) is not None) is expect
+
+
+@pytest.mark.parametrize("pattern", [r"[a\s-", r"[\s-"])
+def test_unterminated_class_after_s_dash_fails_open(pattern: str) -> None:
+    assert compile_regex(pattern) is None
 
 
 def test_js_class_with_space_does_not_backtrack_exponentially() -> None:
