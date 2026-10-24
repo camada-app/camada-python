@@ -197,6 +197,7 @@ def _js_to_re(pattern: str) -> str:
     out: list[str] = []
     i, n, in_class = 0, len(pattern), False
     start, neg, pulled, pulled_end, solo_end = 0, False, [], -1, -1   # the open class: its `[` index in out, negation, \s/\S pulled out
+    rng = 0   # in a class: 0 no atom to start a range, 1 an atom that can, 2 a range dash awaiting its end
     named = _JS_NAMED_GROUP.search(pattern) is not None
     while i < n:
         ch = pattern[i]
@@ -210,6 +211,7 @@ def _js_to_re(pattern: str) -> str:
                 if in_class:
                     pulled.append(_JS_SPACE[nxt])
                     pulled_end = i + 2
+                    rng = 0
                 else:
                     out.append(_JS_SPACE[nxt])
                 i += 2
@@ -220,6 +222,7 @@ def _js_to_re(pattern: str) -> str:
                 continue
             kept = (not (nxt.isascii() and nxt.isalpha()) or _JS_ESCAPE.match(pattern, i + 1) is not None
                     or (nxt == "B" and not in_class) or (nxt == "k" and named) or (nxt == "c" and in_class))
+            rng = 0 if rng == 2 else 1
             out.append(pattern[i : i + 2] if kept else "\\\\c" if nxt == "c" else nxt)   # JS reads `\c` before a non-letter as text
             i += 2
             continue
@@ -229,7 +232,17 @@ def _js_to_re(pattern: str) -> str:
                 if dash and i == pulled_end:   # JS reads the atom after that dash as standalone: a dash right after it is text too
                     m = _JS_ATOM.match(pattern, i + 1)
                     solo_end = m.end() if m else i + 2   # the pattern always matches: a dash is followed by an atom
-                out.append("\\-" if dash else "\\[" if ch == "[" else ch)   # a literal `[` would read as a nested set
+                if dash:
+                    rng = 0
+                elif ch == "-":
+                    # a doubled `-` reads as a set difference to re: escape the literal one, or the range end
+                    dash = rng == 2 or (rng == 0 and pattern.startswith("-", i + 1))
+                    rng = 2 if rng == 1 else 1 if dash and rng == 0 else 0
+                elif not (neg and len(out) == start + 1 and ch == "^"):
+                    rng = 0 if rng == 2 else 1
+                    if ch in "&|~" and out[-1] == ch:   # `&&` `||` `~~` read as a set operator
+                        dash = True
+                out.append("\\" + ch if dash else "\\[" if ch == "[" else ch)   # a literal `[` would read as a nested set
             elif len(set(pulled)) == 2:   # \s and \S together: any char
                 out[start:] = ["(?!)" if neg else "[\\s\\S]"]
                 in_class = False
@@ -258,6 +271,7 @@ def _js_to_re(pattern: str) -> str:
                 out.append("(?!)")
                 i += 2
                 continue
+            rng = 0
             in_class, start, neg, pulled = True, len(out), pattern.startswith("^", i + 1), []
             out.append("[")
             i += 1
