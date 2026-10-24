@@ -468,6 +468,7 @@ def test_named_mode_needs_a_real_group(pattern: str, text: str, hit: bool) -> No
         r"(a)*\1", r"(a)*x\1", r"(a){0,2}x\1", r"(b*)*x\1", r"(b|)*x\1", r"(a?){0,2}x\1", r"(?<m>b*)*x\k<m>", r"(b*)*\1",   # the group repeats
         r"(?:(?=(a)))?a\1", r"(?=(a))?a\1", r"(?=(a)){0,1}a\1", r"(?<a>x)(?=(?<b>y))?y\k<b>", r"(?:(?=(a))x?)?a\1",   # empty iteration keeps a capture
         r"(?=(a??)?)\1a", r"(?=(?:a??)?(b)?)a\1", r"(?=(a*?){0,1})[ab]*\1", r"(?=x(?<n>a??(x)*|){0,1})x\k<n>",   # a conditional reference into a lookahead
+        r"(?=(?:a??)?(b?))a\1", r"(?=(?:|a)?(b?))a\1", r"(?=(?:a*?)*(b?))a\1", r"(?=x(?=(?:a??)?(b?)))xa\1", r"(?=(?:a??)?(?<n>b?))a\k<n>",   # a plain one past a nullable optional group
         "(a)?" * 100 + r"x\100",   # `re` reads \100 as octal
         "(a)" * 150 + r"\150", "(a)" * 100 + r"\100",   # same for a group that always captured
         r"(b*)+x\1", r"(b|)+x\1", r"(a?)+x\1", r"\1(b*)+x\1", r"(?:(b*))+x\1", r"(?<m>b*)+x\k<m>", r"(\x41?)+x\1",   # a repeat that can
@@ -499,6 +500,8 @@ def test_backreference_to_a_maybe_unset_group_reads_empty(pattern: str, text: st
 
 def test_fail_open_rules_leave_plain_lookahead_and_group_99_compiled() -> None:
     assert (rx := compile_regex(r"(?=(a))a\1")) is not None and rx.fullmatch("aa")   # node: true
+    assert (rx := compile_regex(r"(?=(?:a)?(b?))a\1")) is not None and rx.fullmatch("a") and rx.fullmatch("ab")   # node: true on "a" and "ab" (body not nullable)
+    assert (rx := compile_regex(r"(?:(a)|b)(?=(\1))\2")) is not None and rx.fullmatch("aa")
     assert (rx := compile_regex("(a)?" * 99 + r"x\99")) is not None and rx.fullmatch("a" * 99 + "xa")   # node: true
 
 
