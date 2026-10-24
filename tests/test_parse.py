@@ -498,6 +498,13 @@ def test_forward_reference_past_group_99_still_compiles() -> None:
     assert (rx := compile_regex(r"^\100" + "(a)" * 100 + "$")) is not None and rx.search("a" * 100)   # node: true
 
 
+def test_numbered_escape_past_group_count_with_a_group_prefix_fails_open() -> None:
+    # node: `\108` with 12 groups is octal `\10` + "8"; `re` reads group 10 + "8"
+    assert compile_regex("(a)" * 12 + r"\108") is None
+    assert compile_regex("(a)" * 12 + r"\129") is None
+    assert (rx := compile_regex("(a)" * 12 + r"\123")) is not None and rx.search("a" * 12 + "S")   # three octal digits: both octal
+
+
 def test_run_of_k_openers_is_linear_literal_text() -> None:
     # no named group: `\k<` is the letter k, so the text is literal; each name scan stops at the next `<` (was quadratic)
     assert (rx := compile_regex("\\k<" * 20000 + ">")) is not None
