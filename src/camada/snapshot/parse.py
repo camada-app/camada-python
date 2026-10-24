@@ -188,7 +188,8 @@ _JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
 
 
 def _over_bound(d: str) -> bool:
-    return len(d.lstrip("0")) > 5 or int(d) > _RE_MAX_BOUND   # length first: int() refuses a huge digit string
+    d = d.lstrip("0")
+    return len(d) > 5 or int(d or "0") > _RE_MAX_BOUND   # length first: int() refuses a huge digit string
 
 
 def _js_to_re(pattern: str) -> str:
@@ -293,12 +294,7 @@ def _js_to_re(pattern: str) -> str:
             out.append("\\Z")
             i += 1
             continue
-        elif ch == "{":
-            brace = _JS_BRACE.match(pattern, i)
-            if not brace:
-                out.append("\\{")
-                i += 1
-                continue
+        elif ch == "{" and (brace := _JS_BRACE.match(pattern, i)):
             lo, comma, hi = brace.groups()
             if _over_bound(lo):
                 lo = str(_RE_MAX_BOUND)
@@ -306,6 +302,10 @@ def _js_to_re(pattern: str) -> str:
                 hi = ""   # an upper bound past it never binds a real input, so drop it
             out.append(f"{{{lo}{comma or ''}{hi}}}")
             i = brace.end()
+            continue
+        elif ch == "{":
+            out.append("\\{")
+            i += 1
             continue
         out.append(ch)
         i += 1
