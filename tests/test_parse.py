@@ -123,6 +123,26 @@ def test_js_regex_spellings_are_translated() -> None:
     assert rx is not None and rx.search("a\nb\n") is not None
 
 
+def test_non_js_brace_is_text_not_a_bound() -> None:
+    import time
+
+    rx = compile_regex("a{,3}")
+    assert rx is not None and rx.fullmatch("a{,3}") and not rx.fullmatch("aa")
+    rx = compile_regex("a{,}")
+    assert rx is not None and rx.fullmatch("a{,}") and not rx.fullmatch("aaa")
+    rx = compile_regex(".{,2000}.{,2000}.{,2000}!")
+    assert rx is not None
+    t0 = time.perf_counter()
+    assert rx.search("a" * 2048) is None
+    assert time.perf_counter() - t0 < 0.1
+    rx = compile_regex("a{1,3}")
+    assert rx is not None and rx.fullmatch("aaa")
+    rx = compile_regex("[{,3}]")
+    assert rx is not None and rx.fullmatch(",")
+    rx = compile_regex("\\{,3}")
+    assert rx is not None and rx.fullmatch("{,3}")
+
+
 def test_one_matcher_serves_concurrent_requests_without_crosstalk() -> None:
     import threading
     import time
