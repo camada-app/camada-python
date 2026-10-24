@@ -576,7 +576,7 @@ def test_non_js_group_fails_open(pattern: str) -> None:
 
 @pytest.mark.parametrize("pattern", [
     "(?<n>a)(?<n>b)", "(?<n>(?<n>a))", "(?:(?<n>a)|b)(?<n>c)", "(?<n>a)(?:b|(?<n>c))", "(?:(?<n>a)|(?<n>b))(c)\\2", r"(?:(?<n>a)|(?<n>b))\k<n>",
-    "(?<n-m>a)", "(?<n+1>a)", "(?<\u00b7a>a)",
+    "(?<n-m>a)", "(?<n+1>a)", "(?<\u00b7a>a)", "(?:(?<n>a)|(?<n>b))(?<n>c)",
 ])
 def test_bad_group_names_fail_open(pattern: str) -> None:
     assert compile_regex(pattern) is None   # duplicate or unreadable capture names (camada-all-7xyl)
@@ -584,7 +584,7 @@ def test_bad_group_names_fail_open(pattern: str) -> None:
 
 @pytest.mark.parametrize(("pattern", "text", "ok"), [
     ("(?<\u00e9>a)\\k<\u00e9>", "aa", True), ("(?<n>a)|(?<n>b)", "b", True), ("(?:(?<n>a)|(?<n>b))c", "bc", True),
-    ("((?<n>a)|x)|(?<n>b)", "b", True), ("((?<n>a)|x)|(?<n>b)", "c", False),
+    ("((?<n>a)|x)|(?<n>b)", "b", True), ("((?<n>a)|x)|(?<n>b)", "c", False), ("(?<n>a)|(?:(?<n>b)|(?<n>c))", "c", True),
 ])
 def test_js_valid_group_names_compile(pattern: str, text: str, ok: bool) -> None:
     rx = compile_regex(pattern)
