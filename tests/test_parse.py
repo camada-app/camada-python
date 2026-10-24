@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+import warnings
 from typing import Any
 
 import pytest
@@ -377,3 +378,19 @@ def test_literal_bracket_in_class_compiles_without_warning() -> None:
     rx = compile_regex("[[:alpha:]]")   # JS: the class {[ : a l p h} then a literal `]`
     assert rx is not None and rx.search("b") is None
     assert rx.search("a]") is not None and rx.search(":]") is not None
+
+
+@pytest.mark.parametrize(
+    ("pattern", "matches"),
+    [
+        ("[a&&b]", "&ab"), ("[a||b]", "ab|"), ("[a~~b]", "ab~"), ("[&&&]", "&"),
+        ("[!--]", "".join(map(chr, range(33, 46)))), ("[+--]", "+,-"), ("[a-c--]", "-abc"),
+        ("[--a]", "".join(map(chr, range(45, 98)))),
+    ],
+)
+def test_doubled_class_operator_chars_are_members_without_a_warning(pattern: str, matches: str) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        rx = compile_regex(pattern)
+    assert rx is not None
+    assert "".join(chr(c) for c in range(32, 127) if rx.fullmatch(chr(c))) == "".join(sorted(matches))
