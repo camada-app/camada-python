@@ -498,3 +498,7 @@ def test_backreference_to_a_captured_group_still_compiles(pattern: str, yes: lis
 
 def test_out_of_range_numeric_escape_is_no_backreference() -> None:
     assert compile_regex(r"\2(a)") is None   # `re` rejects the octal-looking escape, as before; the scan adds no verdict
+
+
+def test_deeply_nested_groups_fail_open() -> None:
+    assert compile_regex("(?:" * 1000 + "a" + ")" * 1000) is None
