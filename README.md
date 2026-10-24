@@ -195,7 +195,9 @@ regexes read by Python's `re` (named groups, `[^]` and `\cX` are translated, `\d
 ASCII); a spelling `re` still rejects never matches here, while it does at the edge. An astral
 character (an emoji, say) is one character here and two UTF-16 units at the edge, so a pattern
 that counts characters around one (`^.$`, `.{2}`, `[^a]`, `\S`) or puts one in a class or before
-a quantifier can disagree; `.*` and a bare emoji agree.
+a quantifier can disagree; `.*` and a bare emoji agree. A path regex is case-insensitive, but only
+ASCII letters fold here (`regex.ASCII` keeps `\d`/`\w`/`\b` as JS reads them), so `^é$` does not match `É` where
+the edge's JS `/i` does. This is an accepted gap (camada-all-6oof); write both cases, `^[éÉ]$`.
 
 ## Deploying it
 
