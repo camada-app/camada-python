@@ -565,6 +565,7 @@ def test_deeply_nested_groups_fail_open() -> None:
 @pytest.mark.parametrize("pattern", [
     r"(?:(a{0,2}))((\b\3)*?)?(?i:\1|[^a]*)+?", "(?i:googlebot|bingbot)", "(?-i:a)", "(?s:.)", "(?m:a$)", "(?i-m:a)", "x(?i:a)",
     "a(?i)b", "(?i)admin", "(?x:a b)", "(?^i:a)", "(?-i)a", "(?s)a.b", "(?R)", "x(?im-s)y",
+    "(?iV0)admin", "(?V0i:a)", "a(?V0)b", "(?V0-i:a)",
 ])
 def test_inline_flag_group_fails_open(pattern: str) -> None:
     assert compile_regex(pattern) is None   # JS rejects it or V8 mis-evaluates it (camada-all-lsl8)

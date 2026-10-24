@@ -189,7 +189,7 @@ _JS_BRACE = re.compile(r"\{([0-9]+)(?:(,)([0-9]*))?\}")   # optional group: no q
 _RE_MAX_BOUND = 65535   # same as camada-php: above any path or header a request carries (pathsRegex runs uncapped)
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
-_JS_FLAG_GROUP = re.compile(r"\(\?[A-Za-z^-]+[:)]")   # `(?i:`, `(?x:`, `(?^i:`, `(?i)`: an inline flag group
+_JS_FLAG_GROUP = re.compile(r"\(\?[A-Za-z0-9^-]+[:)]")   # inline flag group `(?i:`, `(?i)`; digits: `V0` is a flag
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
 _JS_BACKREF = re.compile(r"\\k<([^<>]+)>")   # a JS name holds no `<` or `>`: linear on a run of `\k<`
 _JS_REF = re.compile(r"\\(?:k<([^<>]+)>|([1-9][0-9]*))")   # a named or numbered backreference: group 1 or 2
