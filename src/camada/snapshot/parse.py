@@ -178,7 +178,7 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
 
 _JS_BRACE = re.compile(r"\{[0-9]+(?:,[0-9]*)?\}")
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
-_JS_ATOM = re.compile(r"\\(?:c[A-Za-z]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[\s\S])|[\s\S]")   # one class atom
+_JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
 _JS_BACKREF = re.compile(r"\\k<([^>]+)>")
 _JS_WS = r"\t-\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"   # JS \s; re.ASCII's is ASCII-only
@@ -204,10 +204,11 @@ def _js_to_re(pattern: str) -> str:
         if ch == "\\" and i + 1 < n:
             nxt = pattern[i + 1]
             # Annex B: inside a class `\c` also takes a digit or `_`
-            if nxt == "c" and i + 2 < n and (pattern[i + 2].isalpha() or in_class and pattern[i + 2] in "0123456789_"):
+            cc = pattern[i + 2 : i + 3]
+            if nxt == "c" and cc and (cc.isascii() and cc.isalpha() or in_class and cc in "0123456789_"):
                 if in_class:
                     rng = 0 if rng == 2 else 1
-                out.append(re.escape(chr(ord(pattern[i + 2].upper()) % 32)))
+                out.append(re.escape(chr(ord(cc.upper()) % 32)))
                 i += 3
                 continue
             if nxt in "sS":
