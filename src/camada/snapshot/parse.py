@@ -204,6 +204,8 @@ def _js_to_re(pattern: str) -> str:
         if ch == "\\" and i + 1 < n:
             nxt = pattern[i + 1]
             if nxt == "c" and i + 2 < n and pattern[i + 2].isalpha():
+                if in_class:
+                    rng = 0 if rng == 2 else 1
                 out.append(re.escape(chr(ord(pattern[i + 2].upper()) - 64)))
                 i += 3
                 continue
