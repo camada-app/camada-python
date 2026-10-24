@@ -175,20 +175,19 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
 
 
 _JS_BRACE = re.compile(r"\{[0-9]+(?:,[0-9]*)?\}")
-_JS_ESC_KEEP = frozenset("bBdDfnrsStvwW")
-_JS_NAMED_GROUP = re.compile(r"\(\?<[^=!]")
-_HEX2, _HEX4 = re.compile(r"[0-9a-fA-F]{2}"), re.compile(r"[0-9a-fA-F]{4}")
+_JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
+_JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
 
 
 def _js_to_re(pattern: str) -> str:
     r"""The JS-only spellings a tenant is likely to author: `(?<name>` -> `(?P<name>`, `[^]` (any
     char) -> `[\s\S]`, `\cX` -> the control character, a `{` that is no JS quantifier (`{,3}`,
-    `{ 1}`) -> `\{` (JS reads it as text, `re` as a bound), an unescaped `$` outside a class -> `\Z` (JS `$`
-    never matches before a trailing LF), and `\<letter>` that JS (no u flag) reads as the bare letter (`\p`, `\A`,
-    a `\x`/`\u` without its hex digits, `\k` without a named group, `\B` in a class) -> the letter.
-    Anything else `re` rejects still fails open."""
+    `{ 1}`) -> `\{` (JS reads it as text, `re` as a bound), and `$` outside a class -> `\Z` (JS `$` never
+    matches before a trailing newline). `\<letter>` outside JS's escape set is the bare letter, as JS reads it
+    without `u` (`\p{L}` is "p{L}", `\A` is "A"). Anything else `re` rejects still fails open."""
     out: list[str] = []
     i, n, in_class = 0, len(pattern), False
+    named = _JS_NAMED_GROUP.search(pattern) is not None
     while i < n:
         ch = pattern[i]
         if ch == "\\" and i + 1 < n:
@@ -197,18 +196,9 @@ def _js_to_re(pattern: str) -> str:
                 out.append(re.escape(chr(ord(pattern[i + 2].upper()) - 64)))
                 i += 3
                 continue
-            if nxt.isascii() and nxt.isalpha():
-                if nxt in _JS_ESC_KEEP and not (nxt == "B" and in_class):
-                    keep = True
-                elif nxt == "x":
-                    keep = _HEX2.fullmatch(pattern, i + 2, i + 4) is not None
-                elif nxt == "u":
-                    keep = _HEX4.fullmatch(pattern, i + 2, i + 6) is not None
-                else:
-                    keep = nxt == "k" and _JS_NAMED_GROUP.search(pattern) is not None
-                out.append(pattern[i : i + 2] if keep else nxt)
-            else:
-                out.append(pattern[i : i + 2])
+            kept = (not (nxt.isascii() and nxt.isalpha()) or _JS_ESCAPE.match(pattern, i + 1) is not None
+                    or (nxt == "B" and not in_class) or (nxt == "k" and named) or (nxt == "c" and in_class))
+            out.append(pattern[i : i + 2] if kept else "\\\\c" if nxt == "c" else nxt)   # JS reads `\c` before a non-letter as text
             i += 2
             continue
         if in_class:
@@ -219,7 +209,7 @@ def _js_to_re(pattern: str) -> str:
                 i += 3
                 continue
             in_class = True
-        elif ch == "(" and pattern.startswith("(?<", i) and not pattern.startswith(("(?<=", "(?<!"), i):
+        elif ch == "(" and _JS_NAMED_GROUP.match(pattern, i):
             out.append("(?P<")
             i += 3
             continue
