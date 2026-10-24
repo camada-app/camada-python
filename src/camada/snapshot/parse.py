@@ -24,6 +24,7 @@ the original is simply absent.
 """
 from __future__ import annotations
 
+import bisect
 import re
 import sys
 from collections.abc import Callable
@@ -175,6 +176,8 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
     reads empty in JS and fails in `re`: _scan_groups marks it for a translation that reads empty too, or (a repeating
     ancestor, where JS resets the capture per iteration) fails open.
     A `(?` or `(*` group JS lacks (`(?i)`, `(?>`, `(?#`, `(*FAIL)`, ...) fails open: JS rejects it or V8 mis-evaluates it (camada-all-lsl8).
+    A capture name taken twice fails open unless the groups sit in different alternatives of one disjunction (JS throws "Duplicate
+    capture group name"), and any duplicated name with a backreference does too: `regex` numbers the twins as one group (camada-all-7xyl).
     A repeat of 1000+ of an empty group, `b(){65535}c`, fails open: `regex` takes minutes to compile it (camada-all-fe5v).
     Callers pass regex flags (regex.IGNORECASE), not re's."""
     try:
@@ -380,6 +383,8 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
     named, _, marks = scan or _scan_groups(pattern)
     opens: list[int] = []   # the unclosed `(` indices outside a class
     last_group = (-1, -1)   # the (open, close) indices of the group that closed last
+    bars = [-1]   # per open group, the root first: the index of the last `|` in it or an ancestor
+    last_named: dict[str, int] = {}   # each capture name -> the index of its last opener
     while i < n:
         ch = pattern[i]
         if ch == "\\" and i + 1 < n:
@@ -471,14 +476,26 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
         if ch == "(" and _JS_NON_GROUP.match(pattern, i):
             raise ValueError("non-JS group")   # compile_regex fails open: JS rejects it or the engine gives it a meaning (camada-all-lsl8)
         if ch == "(" and _JS_NAMED_GROUP.match(pattern, i):
+            if (gm := _GROUP_NAME.match(pattern, i)) and (prev := last_named.get(gm[1])) is not None:
+                # the twin is exclusive when a group open since before it has seen a `|` since (transitive: the last twin is enough);
+                # with a reference `regex` numbers the twins as one group, so `\2` would read another group
+                if named or bars[bisect.bisect_left(opens, prev)] < prev:
+                    raise ValueError("duplicate group name")   # JS throws unless the twins sit in different alternatives (camada-all-7xyl)
+            if gm:
+                last_named[gm[1]] = i
             opens.append(i)
+            bars.append(bars[-1])
             out.append("(?P<")
             i += 3
             continue
         elif ch == "(":
             opens.append(i)
+            bars.append(bars[-1])
         elif ch == ")" and opens:
             last_group = (opens.pop(), i)
+            bars.pop()
+        elif ch == "|":
+            bars[-1] = i
         elif ch == "$":
             out.append("\\Z")
             i += 1
