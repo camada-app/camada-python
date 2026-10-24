@@ -569,7 +569,7 @@ def test_deeply_nested_groups_fail_open() -> None:
     "(?>a+)b", "(?#c)a", "(a)?(?(1)b)", "(?|a|b)", "(?P<n>a)(?P=n)", "(a)(?1)", "(*FAIL)", "(?'n'a)", "(?~a)", "(?<n>a)(?&n)",
     "(?0)", "a(?", "a(*", "(?", "(*",
 ])
-def test_inline_flag_group_fails_open(pattern: str) -> None:
+def test_non_js_group_fails_open(pattern: str) -> None:
     assert compile_regex(pattern) is None   # JS rejects it or V8 mis-evaluates it (camada-all-lsl8)
     assert compile_path_regex(pattern) is None
 
