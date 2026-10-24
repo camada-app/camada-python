@@ -218,7 +218,7 @@ def _scan_groups(pattern: str) -> _Scan:
     be unset: True. Fail open instead when the group or an ancestor repeats (JS resets captures per iteration, `re` keeps them, and
     a repeating group that matches empty overwrites its capture in `re` where JS rejects that iteration), when the group is
     inside a positive lookahead (JS rejects an empty optional iteration and tries paths in another order, a lookahead keeps its first),
-    or for a numbered reference past group 99 (`re` reads the rewritten `\100` as octal).
+    or for any backward numbered reference past group 99, rewritten or not (`re` reads `\100` as octal).
     A backreference inside a lookbehind, or to a group with a lookbehind ancestor, also diverges: JS matches a lookbehind right
     to left (so "closed before the reference" is backwards there, and a quantified group keeps its leftmost repetition).
     With named groups present, a `\k<name>` that names no group is a JS SyntaxError, so it fails open. Frames are created
@@ -285,8 +285,10 @@ def _scan_groups(pattern: str) -> _Scan:
             return named, True, {}
         if not 0 <= frames[g].end < at:
             marks[at] = end, False
+        elif not is_name and k > 98:
+            return named, True, {}
         elif unset[g]:
-            if rep_above[g] or frames[g].rep or in_la[g] or not is_name and k > 98:
+            if rep_above[g] or frames[g].rep or in_la[g]:
                 return named, True, {}
             marks[at] = end, True
     return named, False, marks
