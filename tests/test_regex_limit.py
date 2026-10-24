@@ -7,18 +7,16 @@ from typing import Any
 
 import pytest
 
-from camada.snapshot import parse
+from camada.snapshot import parse, paths
 from camada.snapshot.match import Matcher, MatchInput
-from camada.snapshot.parse import MATCH_BUDGET_MS, REQUEST_REGEX_BUDGET_MS, parse_snapshot
-from camada.snapshot.paths import MAX_MATCH_INPUT
+from camada.snapshot.paths import MATCH_BUDGET_MS, MAX_MATCH_INPUT, REQUEST_REGEX_BUDGET_MS
 
-from .conftest import fixture_path, read_bin, read_json
+from .conftest import fixture_path, read_json
+from .test_parse import rules_snapshot
 
 REGEX_LIMIT_VECTORS_SHA256 = "26a8c7bdac744186870cc41ed37f2a9c1673320d84bad403c2b1ee95fba92619"
 REL = "regex-limit/regex-limit-vectors.json"
 V = read_json(REL)
-EMPTY_BIN = read_bin("blk5/v5-empty.bin")
-EMPTY_META = read_json("blk5/v5-empty.meta.json")
 
 
 def value(v: Any) -> str:
@@ -28,7 +26,7 @@ def value(v: Any) -> str:
 
 
 def matcher(*rules: dict[str, Any]) -> Matcher:
-    return Matcher(parse_snapshot(EMPTY_BIN, {**EMPTY_META, "rules": list(rules)}))
+    return rules_snapshot(list(rules))
 
 
 def hits(rule: dict[str, Any], **inp: Any) -> bool:
@@ -68,6 +66,6 @@ def test_no_walk_only_per_match_limit() -> None:
     rx = parse.compile_regex(V["over_limit"][0]["rule"]["conds"][0]["v"])
     assert rx is not None
     for _ in range(4):   # no budget accumulates outside a walk: each call still runs (and times out)
-        assert parse.regex_hit(rx, "a" * 2048, True) is True
-        assert parse.regex_hit(rx, "a" * 2048, False) is False
-    assert not hasattr(parse._budget, "left") or parse._budget.left is None
+        assert paths.regex_hit(rx, "a" * 2048, True) is True
+        assert paths.regex_hit(rx, "a" * 2048, False) is False
+    assert getattr(paths._budget, "left", None) is None
