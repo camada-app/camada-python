@@ -430,3 +430,59 @@ def test_doubled_class_operator_chars_are_members_without_a_warning(pattern: str
         rx = compile_regex(pattern)
     assert rx is not None
     assert "".join(chr(c) for c in range(127) if rx.fullmatch(chr(c))) == "".join(sorted(matches))
+
+
+def test_class_with_pipe_alternation_chars_compiles_without_warning() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        rx = compile_regex(r"[a|\s|b]")
+    assert rx is not None
+    assert all(rx.search(c) for c in "|a ") and rx.search("x") is None
+
+
+@pytest.mark.parametrize(
+    ("pattern", "text", "hit"),
+    [
+        (r"[(?<]\k<n>", "(k<n>", True),   # `(?<` inside a class is no group: `\k` is the letter k
+        (r"\(?<n>\k<n>", "(<n>k<n>", True),   # escaped paren: no named group either
+        (r"\(?<n>\k<n>", "<n>k<n>", True),
+        (r"[^](?<n>a)\k<n>", "xaa", True),
+        (r"[](?<n>a)\k<n>", "aa", False),
+    ],
+)
+def test_named_mode_needs_a_real_group(pattern: str, text: str, hit: bool) -> None:
+    rx = compile_regex(pattern)
+    assert rx is not None and (rx.search(text) is not None) is hit
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        r"^(?:(?<n>a)|b)+\k<n>$", r"(?<q>[\"'])?x\k<q>", r"\1(a)", r"(a\1)", r"(?:\1(a))+", r"(?:(a)|b)\1", r"(a)?x\1",
+        r"(a)*x\1", r"(a){0,2}x\1", r"(a){00}x\1", r"(a)??x\1", r"(?!(a))\1b", r"(a)|b\1", r"(?:(a)\1|b)", r"(?:(a))?\1",
+        r"\k<n>(?<n>a)", r"(?<!(a))\1",
+    ],
+)
+def test_backreference_to_a_maybe_unset_group_fails_open(pattern: str) -> None:
+    assert compile_regex(pattern) is None
+
+
+@pytest.mark.parametrize(
+    ("pattern", "yes", "no"),
+    [
+        (r"(a|b)\1", ["aa", "bb"], ["ab"]),
+        (r"(a)+\1", ["aaa"], ["a"]),
+        (r"(?:(a)\1)+", ["aaaa"], ["aaa"]),
+        (r"(?<n>a)\k<n>", ["aa"], ["ab"]),
+        (r"(a){1,2}\1", ["aaa"], ["a"]),
+        (r"[\1](a)", ["\x01a"], ["aa", "1a"]),   # class escape, no backreference
+    ],
+)
+def test_backreference_to_a_captured_group_still_compiles(pattern: str, yes: list[str], no: list[str]) -> None:
+    rx = compile_regex(pattern)
+    assert rx is not None
+    assert all(rx.fullmatch(t) for t in yes) and not any(rx.fullmatch(t) for t in no)
+
+
+def test_out_of_range_numeric_escape_is_no_backreference() -> None:
+    assert compile_regex(r"\2(a)") is None   # `re` rejects the octal-looking escape, as before; the scan adds no verdict
