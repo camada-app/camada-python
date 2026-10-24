@@ -123,6 +123,32 @@ def test_js_regex_spellings_are_translated() -> None:
     assert rx is not None and rx.search("a\nb\n") is not None
 
 
+@pytest.mark.parametrize(
+    ("pattern", "text", "not_text"),
+    [
+        ("a{,3}", "a{,3}", "aa"),
+        ("a{,}", "a{,}", "aaa"),
+        ("a{1,3}", "aaa", None),
+        ("[{,3}]", ",", None),
+        ("\\{,3}", "{,3}", None),
+    ],
+)
+def test_non_js_brace_is_text_not_a_bound(pattern: str, text: str, not_text: str | None) -> None:
+    rx = compile_regex(pattern)
+    assert rx is not None and rx.fullmatch(text)
+    assert not_text is None or not rx.fullmatch(not_text)
+
+
+def test_non_js_brace_does_not_blow_up_the_search() -> None:
+    import time
+
+    rx = compile_regex(".{,2000}.{,2000}.{,2000}!")
+    assert rx is not None
+    t0 = time.perf_counter()
+    assert rx.search("a" * 2048) is None
+    assert time.perf_counter() - t0 < 0.1
+
+
 def test_one_matcher_serves_concurrent_requests_without_crosstalk() -> None:
     import threading
     import time
