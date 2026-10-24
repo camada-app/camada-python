@@ -167,7 +167,9 @@ def in_range6(r: Bits, n: int, w: Words) -> bool:
 def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
     r"""A pattern this runtime rejects never matches, and never throws (fail open). Patterns are
     authored as JS regexes (the analyst validates them with `new RegExp`), so the JS spellings
-    `re` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them."""
+    `re` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them.
+    An astral char is one code point here and two UTF-16 units in JS, so `.`, `[^a]` and `\S` count it
+    once (an accepted gap, camada-all-vuvo)."""
     try:
         return re.compile(_js_to_re(pattern), re.ASCII | flags)
     except (re.error, TypeError, ValueError, OverflowError):
