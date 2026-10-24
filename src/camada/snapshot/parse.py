@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..ipparse import Words
-from .paths import PathForms, canon_path, dir_key, over_cap, path_hit, path_pred
+from .paths import MAX_MATCH_INPUT, PathForms, canon_path, dir_key, over_cap, path_hit, path_pred
 
 Bits = memoryview   # a uint32 view: memoryview.cast('I')
 
@@ -176,8 +176,10 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
         return None
 
 
-_JS_BRACE = re.compile(r"\{([0-9]+)(,)?([0-9]*)\}")
-_RE_MAX_BOUND = 65535   # same as camada-php; below re's MAXREPEAT so an empty-matching group repeated m times stays cheap
+_JS_BRACE = re.compile(r"\{([0-9]+)(?:(,)([0-9]*))?\}")   # optional group: no quadratic backtrack on `{11...` sans `}`
+# every regex only runs on values of at most MAX_MATCH_INPUT units (over_cap), so no input tells a bound above the cap from cap+1;
+# clamping there keeps an empty-matching group like `(?:a|){99999999999}` cheap
+_RE_MAX_BOUND = MAX_MATCH_INPUT + 1
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
@@ -187,9 +189,12 @@ _JS_DOT = r"[^\n\r\u2028\u2029]"
 _JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
 
 
-def _over_bound(d: str) -> bool:
-    d = d.lstrip("0")
-    return len(d) > 5 or int(d or "0") > _RE_MAX_BOUND   # length first: int() refuses a huge digit string
+def _num(d: str) -> tuple[int, str]:
+    d = d.lstrip("0") or "0"
+    return len(d), d   # orders like the integer without int(), which refuses a huge digit string
+
+
+_MAX_NUM = _num(str(_RE_MAX_BOUND))
 
 
 def _js_to_re(pattern: str) -> str:
@@ -296,11 +301,13 @@ def _js_to_re(pattern: str) -> str:
             continue
         elif ch == "{" and (brace := _JS_BRACE.match(pattern, i)):
             lo, comma, hi = brace.groups()
-            if _over_bound(lo):
-                lo = str(_RE_MAX_BOUND)
-            if hi and _over_bound(hi):
-                hi = ""   # an upper bound past it never binds a real input, so drop it
-            out.append(f"{{{lo}{comma or ''}{hi}}}")
+            lo_n, hi_n = _num(lo), (_num(hi) if hi else None)
+            if hi_n is not None and lo_n > hi_n:
+                out.append(brace[0])   # m > n is a JS SyntaxError: leave it so re rejects it too
+            else:
+                lo = str(_RE_MAX_BOUND) if lo_n > _MAX_NUM else lo_n[1]   # stripped: re's int() refuses >4300 digits
+                hi = "" if hi_n is None or hi_n > _MAX_NUM else hi_n[1]   # an upper bound past it never binds a real input, so drop it
+                out.append(f"{{{lo}{comma or ''}{hi}}}")
             i = brace.end()
             continue
         elif ch == "{":
