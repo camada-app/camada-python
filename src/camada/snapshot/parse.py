@@ -296,12 +296,11 @@ def _js_to_re(pattern: str) -> str:
                 i += 1
                 continue
             lo, comma, hi = brace.groups()
-            if int(lo) > _RE_MAX_BOUND or (hi and int(hi) > _RE_MAX_BOUND):
-                lo = str(min(int(lo), _RE_MAX_BOUND))
-                # an upper bound past it never binds a real input, so drop it
-                out.append(f"{{{lo}}}" if not comma else f"{{{lo},{hi if hi and int(hi) <= _RE_MAX_BOUND else ''}}}")
-            else:
-                out.append(brace.group())
+            if int(lo) > _RE_MAX_BOUND:
+                lo = str(_RE_MAX_BOUND)
+            if hi and int(hi) > _RE_MAX_BOUND:
+                hi = ""   # an upper bound past it never binds a real input, so drop it
+            out.append(f"{{{lo}{comma or ''}{hi}}}")
             i = brace.end()
             continue
         out.append(ch)
