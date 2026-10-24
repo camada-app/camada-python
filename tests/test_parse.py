@@ -363,3 +363,14 @@ def test_unterminated_class_after_s_dash_fails_open(pattern: str) -> None:
 def test_js_class_with_space_does_not_backtrack_exponentially() -> None:
     rx = compile_regex(r"^[ \s]+x")
     assert rx is not None and rx.search(" " * 3000) is None
+
+
+def test_named_backreference() -> None:
+    rx = compile_regex(r"(?<n>a)\k<n>")
+    assert rx is not None and rx.fullmatch("aa") is not None and rx.fullmatch("ab") is None
+
+
+def test_literal_bracket_in_class_compiles_without_warning() -> None:
+    rx = compile_regex("[[:alpha:]]")   # JS: the class {[ : a l p h} then a literal `]`
+    assert rx is not None and rx.search("b") is None
+    assert rx.search("a]") is not None and rx.search(":]") is not None
