@@ -179,6 +179,7 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
     A capture name taken twice fails open unless the groups sit in different alternatives of one disjunction (JS throws "Duplicate
     capture group name"), and any duplicated name with a backreference does too: `regex` numbers the twins as one group (camada-all-7xyl).
     A repeat of 1000+ of an empty group, `b(){65535}c`, fails open: `regex` takes minutes to compile it (camada-all-fe5v).
+    Nested counts multiply: `b((){999}){999}c` fails open too (camada-all-8fg6).
     IGNORECASE folds ASCII letters only, so `^é$` misses `É` where JS `/i` matches: an accepted gap, since dropping ASCII would
     also widen \d \w \b (camada-all-6oof).
     Callers pass regex flags (regex.IGNORECASE), not re's."""
@@ -197,6 +198,7 @@ _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # t
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
 _JS_NON_GROUP = re.compile(r"\((?:\*|\?(?![:=!<]))")   # a `(?` or `(*` opening none of the JS forms `(?:` `(?=` `(?!` `(?<`
 _JS_GROUP_SHELL = re.compile(r"\((?:\?(?::|<?=|<[^<>=!][^<>]*>))?|\)|[?*+]|\{[0-9]+(?:,[0-9]*)?\}")   # an empty group's parts
+_JS_EMPTY_REPEAT = re.compile(r"\((?:\?(?::|<?=|<[^<>=!][^<>]*>))?\)\{")   # an empty group opening a `{n}` repeat
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
 _JS_BACKREF = re.compile(r"\\k<([^<>]+)>")   # a JS name holds no `<` or `>`: linear on a run of `\k<`
 _JS_REF = re.compile(r"\\(?:k<([^<>]+)>|([1-9][0-9]*))")   # a named or numbered backreference: group 1 or 2
@@ -207,7 +209,7 @@ _JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
 
 
 def _empty_repeat_product(span: str) -> int:
-    """The product of the largest bound of every `{n}` `{n,}` `{n,m}` in an all-empty group span (nested counts multiply)."""
+    """The product of the largest bound of every `{n}` `{n,}` `{n,m}` in a group span (nested counts multiply)."""
     prod = 1
     for m in _JS_BRACE.finditer(span):
         lo, hi = (min(int(x), _RE_MAX_BOUND) if x and len(x) < 6 else _RE_MAX_BOUND if x else 0 for x in (m[1], m[3]))
@@ -524,9 +526,11 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
         elif ch == "{" and (brace := _JS_BRACE.match(pattern, i)):
             lo, comma, hi = brace.groups()
             lo_n, hi_n = _num(lo), (_num(hi) if hi else None)
-            if last_group[1] == i - 1 and not _JS_GROUP_SHELL.sub("", body := pattern[last_group[0] : i]):
+            if last_group[1] == i - 1 and (body := pattern[last_group[0] : i]) and (
+                not _JS_GROUP_SHELL.sub("", body) or _JS_EMPTY_REPEAT.search(body)
+            ):   # an all-empty group, or one holding a repeated empty group beside other atoms
                 if _empty_repeat_product(body + brace[0]) >= 1000:
-                    raise ValueError("huge repeat of an empty group")   # fail open: `regex` compiles `b(){65535}c` and `b((){999}){999}c` in seconds to minutes (camada-all-fe5v, camada-all-8fg6)
+                    raise ValueError("huge repeat of an empty group")   # `b((){999}){999}c` takes seconds (camada-all-8fg6)
             if hi_n is not None and lo_n > hi_n:
                 out.append(brace[0])   # m > n is a JS SyntaxError: leave it so re rejects it too
             else:
