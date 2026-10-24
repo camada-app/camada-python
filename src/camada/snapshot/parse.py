@@ -170,12 +170,13 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
     `re` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them.
     An astral char is one code point here and two UTF-16 units in JS, so `.`, `[^a]` and `\S` count it
     once (an accepted gap, camada-all-vuvo). A backreference to a group that may not have captured on that pass
-    (see _scan_groups) reads empty in JS and fails in `re`, so it fails open too."""
+    reads empty in JS and fails in `re`: _scan_groups marks it for a translation that reads empty too, or (a repeating
+    ancestor, where JS resets the capture per iteration) fails open."""
     try:
-        named, diverges = _scan_groups(pattern)
+        named, diverges, marks = _scan_groups(pattern)
         if diverges:
             return None
-        return re.compile(_js_to_re(pattern, named), re.ASCII | flags)
+        return re.compile(_js_to_re(pattern, named, marks), re.ASCII | flags)
     except (re.error, TypeError, ValueError, OverflowError, RecursionError):   # RecursionError: deeply nested groups
         return None
 
@@ -201,6 +202,7 @@ class _Frame:
     neg: bool = False   # negative lookaround
     lb: bool = False   # lookbehind (positive or negative)
     end: int = -1   # index of its `)`, -1 while open
+    rep: bool = False   # repeat-quantified (`+` `*` `{n,}` `{n}` n>1 `{n,m}` m>1)
 
 
 def _in_lookbehind(frames: list[_Frame], f: int) -> bool:
@@ -211,19 +213,22 @@ def _in_lookbehind(frames: list[_Frame], f: int) -> bool:
     return False
 
 
-def _scan_groups(pattern: str) -> tuple[bool, bool]:
-    r"""(a real `(?<name>` group exists, a backreference may target a group that did not capture): one escape- and class-aware
-    walk (a class opens at an unescaped `[`, `[` is literal inside, the first unescaped `]` closes it). A backreference
-    diverges when its group is still open at the reference, sits under a min-0 quantifier or a negative lookaround
-    (itself or any ancestor), or lies in an alternation branch (an ancestor or the top level has a `|`).
+def _scan_groups(pattern: str) -> tuple[bool, bool, dict[int, bool]]:
+    r"""(a real `(?<name>` group exists, the pattern must fail open, {reference index: True for a conditional `(?(g)\g)`, False for
+    `(?:)`}): one escape- and class-aware walk (a class opens at an unescaped `[`, `[` is literal inside, the first
+    unescaped `]` closes it). JS reads a reference to an unset group as empty. A reference whose group is still open at
+    the reference (forward or self) is always empty: False. One whose group sits under a min-0 quantifier or a negative
+    lookaround (itself or any ancestor), or lies in an alternation branch (an ancestor or the top level has a `|`), may
+    be unset: True, unless a strict ancestor of the group repeats (JS resets captures per iteration, `re` keeps them): fail open.
     A backreference inside a lookbehind, or to a group with a lookbehind ancestor, also diverges: JS matches a lookbehind right
     to left (so "closed before the reference" is backwards there, and a quantified group keeps its leftmost repetition).
     With named groups present, a `\k<name>` that names no group is a JS SyntaxError, so it fails open."""
     if not _JS_HAS_REF.search(pattern):
-        return False, False   # nothing reads the names or can diverge without a reference
+        return False, False, {}   # nothing reads the names or can diverge without a reference
     frames = [_Frame(-1)]
     stack = [0]
     groups: list[tuple[int, str | None]] = []   # (frame, name) in `(` order
+    marks: dict[int, bool] = {}
     refs: list[tuple[str, bool, int, int]] = []   # (name or number, is a name, index, enclosing frame)
     i, n, in_class, named = 0, len(pattern), False, False
     while i < n:
@@ -255,29 +260,38 @@ def _scan_groups(pattern: str) -> tuple[bool, bool]:
             fr.end = i
             b = _JS_BRACE.match(pattern, i + 1)
             fr.min0 = pattern.startswith(("?", "*"), i + 1) or (b is not None and not b[1].strip("0"))
+            fr.rep = pattern.startswith(("+", "*"), i + 1) or (b is not None and (b[2] and not b[3] or _num(b[3] or b[1]) > (1, "1")))
         i += 1
     names = {g[1]: k for k, g in enumerate(groups) if g[1] is not None}
     for ref, is_name, at, home in refs:
         if is_name:
             k = names.get(ref)
             if k is None and named:
-                return named, True
+                return named, True, {}
         else:
             k = int(ref) - 1 if len(ref) < 8 and int(ref) <= len(groups) else None   # past the count it is an octal or identity escape
         if k is None:
             continue
         g = groups[k][0]
         if _in_lookbehind(frames, home) or _in_lookbehind(frames, g):
-            return named, True
+            return named, True, {}
         if not 0 <= frames[g].end < at:
-            return named, True
+            marks[at] = False
+            continue
         f = g
         while f >= 0:
             fr = frames[f]
             if fr.min0 or fr.neg or f != g and fr.alt:
-                return named, True
+                marks[at] = True
+                break
             f = fr.parent
-    return named, False
+        if at in marks:
+            f = frames[g].parent
+            while f >= 0:
+                if frames[f].rep:
+                    return named, True, {}
+                f = frames[f].parent
+    return named, False, marks
 
 
 _GROUP_NAME = re.compile(r"\(\?<([^<>]*)>")   # bounded: each attempt stops at the next `<`
@@ -291,7 +305,7 @@ def _num(d: str) -> tuple[int, str]:
 _MAX_NUM = _num(str(_RE_MAX_BOUND))
 
 
-def _js_to_re(pattern: str, named: bool | None = None) -> str:
+def _js_to_re(pattern: str, named: bool | None = None, marks: dict[int, bool] | None = None) -> str:
     r"""The JS-only spellings a tenant is likely to author: `(?<name>` -> `(?P<name>`, `\k<name>` -> `(?P=name)`, `[^]` (any
     char) -> `[\s\S]`, `\cX` -> the control character, a `{` that is no JS quantifier (`{,3}`,
     `{ 1}`) -> `\{` (JS reads it as text, `re` as a bound), and `$` outside a class -> `\Z` (JS `$` never
@@ -303,8 +317,8 @@ def _js_to_re(pattern: str, named: bool | None = None) -> str:
     i, n, in_class = 0, len(pattern), False
     start, neg, pulled, pulled_end, solo_end = 0, False, [], -1, -1   # the open class: its `[` index in out, negation, \s/\S pulled out
     rng = 0   # in a class: 0 no atom to start a range, 1 an atom that can, 2 a range dash awaiting its end
-    if named is None:
-        named = _scan_groups(pattern)[0]
+    if named is None or marks is None:
+        named, _, marks = _scan_groups(pattern)
     while i < n:
         ch = pattern[i]
         if ch == "\\" and i + 1 < n:
@@ -325,6 +339,11 @@ def _js_to_re(pattern: str, named: bool | None = None) -> str:
                 else:
                     out.append(_JS_SPACE[nxt])
                 i += 2
+                continue
+            if i in marks and (m := _JS_REF.match(pattern, i)):   # a reference to an unset group reads empty in JS
+                name = m[1] or m[2]
+                out.append(("(?:)", f"(?({name})\\{name})" if m[2] else f"(?({name})(?P={name}))")[marks[i]])
+                i = m.end()
                 continue
             if nxt == "k" and named and not in_class and (m := _JS_BACKREF.match(pattern, i)):   # `\k<name>` -> `(?P=name)`
                 out.append(f"(?P={m[1]})")

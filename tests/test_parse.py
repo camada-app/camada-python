@@ -458,14 +458,30 @@ def test_named_mode_needs_a_real_group(pattern: str, text: str, hit: bool) -> No
 @pytest.mark.parametrize(
     "pattern",
     [
-        r"^(?:(?<n>a)|b)+\k<n>$", r"(?<q>[\"'])?x\k<q>", r"\1(a)", r"(a\1)", r"(?:\1(a))+", r"(?:(a)|b)\1", r"(a)?x\1",
-        r"(a)*x\1", r"(a){0,2}x\1", r"(a){00}x\1", r"(a)??x\1", r"(?!(a))\1b", r"(a)|b\1", r"(?:(a)\1|b)", r"(?:(a))?\1",
-        r"\k<n>(?<n>a)", r"(?<!(a))\1",
-        r"(?<=(a)\1)b", r"(?<=([ab]){2})\1", r"(?<=(a))\1", r"(?<=\1(a))b", r"(?<m>)|\k<n>", r"a|\k<n>(?<n>b)",
+        r"^(?:(?<n>a)|b)+\k<n>$", r"(?:(a)|b)+\1", r"(?:(a)?b)*\1", r"(?:(a)|b){1,2}\1", r"(?<!(a))\1",   # a repeating ancestor / lookbehind
+        r"(?<=(a)\1)b", r"(?<=([ab]){2})\1", r"(?<=(a))\1", r"(?<=\1(a))b", r"(?<m>)|\k<n>",
     ],
 )
 def test_backreference_to_a_maybe_unset_group_fails_open(pattern: str) -> None:
     assert compile_regex(pattern) is None
+
+
+@pytest.mark.parametrize(
+    ("pattern", "text", "hit"),   # answers from node: an unset group (or a forward / self reference) reads empty
+    [
+        (r"^(a)?x\1$", "x", True), (r"^(a)?x\1$", "axa", True), (r"^(a)?x\1$", "ax", False), (r"^(?:b|\k<n>(?<n>b))$", "b", True),
+        (r"^(?:(a)|b)\1$", "aa", True), (r"^(?:(a)|b)\1$", "b", True), (r"^(?:(a)|b)\1$", "ba", False), (r"^(?:(a)|b)\1$", "a", False),
+        (r"^(?<q>[\"'])?x\k<q>$", "x", True), (r"^(?<q>[\"'])?x\k<q>$", '"x"', True), (r"^(?<q>[\"'])?x\k<q>$", "\"x", False),
+        (r"^(?<q>[\"'])?x\k<q>$", "'x'", True), (r"^(?<q>[\"'])?x\k<q>$", "'x\"", False),
+        (r"^(a)*\1$", "a", False), (r"^(a)*\1$", "aa", True), (r"^(a)*\1$", "aaa", True),
+        (r"^\1(a)$", "a", True), (r"^\1(a)$", "aa", False), (r"^(a\1)$", "a", True), (r"^(?:\1(a))+$", "aa", True),
+        (r"^\k<n>(?<n>a)$", "a", True), (r"^(a)|b\1$", "b", True), (r"^(?!(a))\1b$", "b", True),
+        (r"^(a){00}x\1$", "x", True), (r"^(?:(a))?\1$", "", True), (r"^(?:(a)\1|b)$", "b", True),
+    ],
+)
+def test_backreference_to_a_maybe_unset_group_reads_empty(pattern: str, text: str, hit: bool) -> None:
+    rx = compile_regex(pattern)
+    assert rx is not None and (rx.search(text) is not None) is hit
 
 
 def test_run_of_k_openers_is_linear_literal_text() -> None:
