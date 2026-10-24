@@ -18,8 +18,8 @@ from dataclasses import dataclass
 import regex
 
 from ..ipparse import Words, parse_ip4, parse_ip6
-from .parse import CompiledRule, RangeSet, RuleRequest, Snapshot, in_range4, in_range6, regex_hit, request_regex_budget
-from .paths import PathForms, path_forms, path_hit, prefixed
+from .parse import CompiledRule, RangeSet, RuleRequest, Snapshot, in_range4, in_range6
+from .paths import PathForms, path_forms, path_hit, prefixed, regex_hit, request_regex_budget
 
 
 @dataclass(slots=True)
@@ -46,7 +46,7 @@ class MatchResult:
 
 
 def _path_in(exact: frozenset[str], prefix: frozenset[str], pats: list[regex.Pattern[str]], p: str) -> bool:
-    return p in exact or (bool(prefix) and prefixed(prefix, p)) or any(regex_hit(rx, p, True) for rx in pats)
+    return p in exact or (bool(prefix) and prefixed(prefix, p)) or any(regex_hit(rx, p, False) for rx in pats)
 
 
 def _rule_result(rule: CompiledRule, version: str) -> MatchResult:

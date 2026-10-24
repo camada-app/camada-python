@@ -13,9 +13,17 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Collection, Sequence
+import threading
+import time
+from collections.abc import Callable, Collection, Iterator, Sequence
+from contextlib import contextmanager
+
+import regex
 
 MAX_MATCH_INPUT = 2048   # regex-cap-sdk v1: the longest value a `matches` regex is run on, in UTF-16 code units
+
+MATCH_BUDGET_MS = 50            # regex-limit v1: the longest one customer regex may run
+REQUEST_REGEX_BUDGET_MS = 100   # ... and the longest all of them may run for one request's rule walk
 
 PathForms = tuple[str, str, str]   # (raw with the query cut, lit, full)
 PathPred = Callable[[str], bool]
@@ -39,6 +47,35 @@ def utf16_len(v: str) -> int:
 
 def over_cap(v: str) -> bool:
     return utf16_len(v) > MAX_MATCH_INPUT
+
+
+_budget = threading.local()   # .left: seconds still spendable by the walk running on this thread, absent outside a walk
+
+
+@contextmanager
+def request_regex_budget() -> Iterator[None]:
+    """The rule walk for one request runs inside this: its regexes share REQUEST_REGEX_BUDGET_MS."""
+    _budget.left = REQUEST_REGEX_BUDGET_MS / 1000
+    try:
+        yield
+    finally:
+        _budget.left = None
+
+
+def regex_hit(rx: regex.Pattern[str], s: str, on_error: bool) -> bool:
+    """rx.search(s) under the per-match limit and, in a walk, what is left of the request's budget.
+    A spent budget or a timeout answers `on_error` (a deny rule hits, a skip rule misses), like over-cap."""
+    left: float | None = getattr(_budget, "left", None)
+    if left is not None and left <= 0:
+        return on_error
+    t0 = time.monotonic()
+    try:
+        return rx.search(s, timeout=MATCH_BUDGET_MS / 1000) is not None
+    except TimeoutError:
+        return on_error
+    finally:
+        if left is not None:
+            _budget.left = left - (time.monotonic() - t0)
 
 
 def _strip_query(raw: str | None) -> str:
@@ -130,15 +167,14 @@ def path_hit(pred: PathPred, forms: PathForms, deny: bool) -> bool:
 
 
 def path_pred(
-    op: str, values: Sequence[str], compile_regex: Callable[[str], Callable[[str], bool] | None], deny: bool = True
+    op: str, values: Sequence[str], compile_regex: Callable[[str], regex.Pattern[str] | None], deny: bool = True
 ) -> PathPred:
     """One path condition -> a predicate over a single path form. `compile_regex` is the caller's
-    JS-regex translation, already case-insensitive, as a predicate that answers `deny` past
-    its limits. A `matches` form over MAX_MATCH_INPUT never runs the regex:
-    it answers `deny` (a hit for block/challenge/warn, a miss for skip)."""
+    JS-regex translation, already case-insensitive. A `matches` form over MAX_MATCH_INPUT never runs
+    the regex: it answers `deny` (a hit for block/challenge/warn, a miss for skip)."""
     if op == "matches":
         rx = compile_regex(values[0])
-        return lambda p: rx is not None and (deny if over_cap(p) else rx(p))
+        return lambda p: rx is not None and (deny if over_cap(p) else regex_hit(rx, p, deny))
     if op == "starts_with":
         v = values[0]
         key = dir_key(v) if v.endswith("/") else canon_path(v)
