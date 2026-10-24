@@ -175,12 +175,18 @@ def compile_regex(pattern: str, flags: int = 0) -> re.Pattern[str] | None:
 
 
 _JS_BRACE = re.compile(r"\{[0-9]+(?:,[0-9]*)?\}")
+_JS_ESC_KEEP = frozenset("bBdDfnrsStvwW")
+_JS_NAMED_GROUP = re.compile(r"\(\?<[^=!]")
+_HEX2, _HEX4 = re.compile(r"[0-9a-fA-F]{2}"), re.compile(r"[0-9a-fA-F]{4}")
 
 
 def _js_to_re(pattern: str) -> str:
     r"""The JS-only spellings a tenant is likely to author: `(?<name>` -> `(?P<name>`, `[^]` (any
     char) -> `[\s\S]`, `\cX` -> the control character, a `{` that is no JS quantifier (`{,3}`,
-    `{ 1}`) -> `\{` (JS reads it as text, `re` as a bound). Anything else `re` rejects still fails open."""
+    `{ 1}`) -> `\{` (JS reads it as text, `re` as a bound), an unescaped `$` outside a class -> `\Z` (JS `$`
+    never matches before a trailing LF), and `\<letter>` that JS (no u flag) reads as the bare letter (`\p`, `\A`,
+    a `\x`/`\u` without its hex digits, `\k` without a named group, `\B` in a class) -> the letter.
+    Anything else `re` rejects still fails open."""
     out: list[str] = []
     i, n, in_class = 0, len(pattern), False
     while i < n:
@@ -191,7 +197,18 @@ def _js_to_re(pattern: str) -> str:
                 out.append(re.escape(chr(ord(pattern[i + 2].upper()) - 64)))
                 i += 3
                 continue
-            out.append(pattern[i : i + 2])
+            if nxt.isascii() and nxt.isalpha():
+                if nxt in _JS_ESC_KEEP and not (nxt == "B" and in_class):
+                    keep = True
+                elif nxt == "x":
+                    keep = _HEX2.fullmatch(pattern, i + 2, i + 4) is not None
+                elif nxt == "u":
+                    keep = _HEX4.fullmatch(pattern, i + 2, i + 6) is not None
+                else:
+                    keep = nxt == "k" and _JS_NAMED_GROUP.search(pattern) is not None
+                out.append(pattern[i : i + 2] if keep else nxt)
+            else:
+                out.append(pattern[i : i + 2])
             i += 2
             continue
         if in_class:
@@ -205,6 +222,10 @@ def _js_to_re(pattern: str) -> str:
         elif ch == "(" and pattern.startswith("(?<", i) and not pattern.startswith(("(?<=", "(?<!"), i):
             out.append("(?P<")
             i += 3
+            continue
+        elif ch == "$":
+            out.append("\\Z")
+            i += 1
             continue
         elif ch == "{" and not _JS_BRACE.match(pattern, i):
             out.append("\\{")
