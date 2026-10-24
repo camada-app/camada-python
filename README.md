@@ -194,9 +194,10 @@ never scores the absence of header order, ASN, country or a TLS fingerprint agai
 ASN and country it resolves itself. Enforcement at this position covers ip, path, user-agent and
 header conditions — ASN, country and TLS entries fail open in-app. `matches` patterns are JS
 regexes read by Python's `re` (named groups, `[^]` and `\cX` are translated, `\d`/`\w`/`\b` stay
-ASCII); a spelling `re` still rejects never matches here, while it does at the edge. An astral character (an emoji, say) is one character here and two UTF-16
-units at the edge, so a pattern that counts characters around one (`^.$`, `.{2}`, `[^a]`, `\S`) can
-disagree; `.*` and literal text agree.
+ASCII); a spelling `re` still rejects never matches here, while it does at the edge. An astral
+character (an emoji, say) is one character here and two UTF-16 units at the edge, so a pattern
+that counts characters around one (`^.$`, `.{2}`, `[^a]`, `\S`) can disagree; `.*` and literal
+text agree.
 
 ## Deploying it
 
