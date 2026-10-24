@@ -179,6 +179,8 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
     A capture name taken twice fails open unless the groups sit in different alternatives of one disjunction (JS throws "Duplicate
     capture group name"), and any duplicated name with a backreference does too: `regex` numbers the twins as one group (camada-all-7xyl).
     A repeat of 1000+ of an empty group, `b(){65535}c`, fails open: `regex` takes minutes to compile it (camada-all-fe5v).
+    IGNORECASE folds ASCII letters only, so `^é$` misses `É` where JS `/i` matches: an accepted gap, since dropping ASCII would
+    also widen \d \w \b (camada-all-6oof).
     Callers pass regex flags (regex.IGNORECASE), not re's."""
     try:
         scan = _scan_groups(pattern)
