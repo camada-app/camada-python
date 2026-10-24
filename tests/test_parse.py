@@ -461,6 +461,9 @@ def test_named_mode_needs_a_real_group(pattern: str, text: str, hit: bool) -> No
     [
         r"^(?:(?<n>a)|b)+\k<n>$", r"(?:(a)|b)+\1", r"(?:(a)?b)*\1", r"(?:(a)|b){1,2}\1", r"(?<!(a))\1",   # a repeating ancestor / lookbehind
         r"(?<=(a)\1)b", r"(?<=([ab]){2})\1", r"(?<=(a))\1", r"(?<=\1(a))b", r"(?<m>)|\k<n>",
+        r"(a)*\1", r"(a)*x\1", r"(a){0,2}x\1", r"(b*)*x\1", r"(b|)*x\1", r"(a?){0,2}x\1", r"(?<m>b*)*x\k<m>", r"(b*)*\1",   # the group repeats
+        r"(?:(?=(a)))?a\1", r"(?=(a))?a\1", r"(?=(a)){0,1}a\1", r"(?<a>x)(?=(?<b>y))?y\k<b>", r"(?:(?=(a))x?)?a\1",   # empty iteration keeps a capture
+        "(a)?" * 100 + r"x\100",   # `re` reads \100 as octal
     ],
 )
 def test_backreference_to_a_maybe_unset_group_fails_open(pattern: str) -> None:
@@ -474,7 +477,6 @@ def test_backreference_to_a_maybe_unset_group_fails_open(pattern: str) -> None:
         (r"^(?:(a)|b)\1$", "aa", True), (r"^(?:(a)|b)\1$", "b", True), (r"^(?:(a)|b)\1$", "ba", False), (r"^(?:(a)|b)\1$", "a", False),
         (r"^(?<q>[\"'])?x\k<q>$", "x", True), (r"^(?<q>[\"'])?x\k<q>$", '"x"', True), (r"^(?<q>[\"'])?x\k<q>$", "\"x", False),
         (r"^(?<q>[\"'])?x\k<q>$", "'x'", True), (r"^(?<q>[\"'])?x\k<q>$", "'x\"", False),
-        (r"^(a)*\1$", "a", False), (r"^(a)*\1$", "aa", True), (r"^(a)*\1$", "aaa", True),
         (r"^\1(a)$", "a", True), (r"^\1(a)$", "aa", False), (r"^(a\1)$", "a", True), (r"^(?:\1(a))+$", "aa", True),
         (r"^\k<n>(?<n>a)$", "a", True), (r"^(a)|b\1$", "b", True), (r"^(?!(a))\1b$", "b", True),
         (r"^(a){00}x\1$", "x", True), (r"^(?:(a))?\1$", "", True), (r"^(?:(a)\1|b)$", "b", True),
@@ -483,6 +485,11 @@ def test_backreference_to_a_maybe_unset_group_fails_open(pattern: str) -> None:
 def test_backreference_to_a_maybe_unset_group_reads_empty(pattern: str, text: str, hit: bool) -> None:
     rx = compile_regex(pattern)
     assert rx is not None and (rx.search(text) is not None) is hit
+
+
+def test_fail_open_rules_leave_plain_lookahead_and_group_99_compiled() -> None:
+    assert (rx := compile_regex(r"(?=(a))a\1")) is not None and rx.fullmatch("aa")   # node: true
+    assert (rx := compile_regex("(a)?" * 99 + r"x\99")) is not None and rx.fullmatch("a" * 99 + "xa")   # node: true
 
 
 def test_run_of_k_openers_is_linear_literal_text() -> None:
