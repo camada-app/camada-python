@@ -115,8 +115,8 @@ def test_two_ip_conditions_consume_two_section_pairs_in_order() -> None:
 
 def test_path_regex_case_folds_ascii_only() -> None:
     # accepted gap (camada-all-6oof): JS /i also folds é/É, regex.ASCII does not; README documents it
-    rx = compile_path_regex("^é$")
-    assert rx is not None and rx.search("É") is None and rx.search("é") is not None
+    rx = compile_path_regex("/é$")
+    assert rx is not None and rx.search("/É") is None and rx.search("/é") is not None
     rx = compile_path_regex("^a$")
     assert rx is not None and rx.search("A") is not None
 
