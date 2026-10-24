@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import struct
+import time
 import warnings
 from typing import Any
 
 import pytest
 
 from camada.snapshot.match import Matcher, MatchInput
-from camada.snapshot.parse import _JS_BRACE, _js_to_re, compile_regex, parse_snapshot
+from camada.snapshot.parse import _JS_BRACE, _js_to_re, _scan_groups, compile_regex, parse_snapshot
 
 from .conftest import read_bin, read_json
 
@@ -458,14 +459,38 @@ def test_named_mode_needs_a_real_group(pattern: str, text: str, hit: bool) -> No
 @pytest.mark.parametrize(
     "pattern",
     [
-        r"^(?:(?<n>a)|b)+\k<n>$", r"(?<q>[\"'])?x\k<q>", r"\1(a)", r"(a\1)", r"(?:\1(a))+", r"(?:(a)|b)\1", r"(a)?x\1",
-        r"(a)*x\1", r"(a){0,2}x\1", r"(a){00}x\1", r"(a)??x\1", r"(?!(a))\1b", r"(a)|b\1", r"(?:(a)\1|b)", r"(?:(a))?\1",
-        r"\k<n>(?<n>a)", r"(?<!(a))\1",
-        r"(?<=(a)\1)b", r"(?<=([ab]){2})\1", r"(?<=(a))\1", r"(?<=\1(a))b", r"(?<m>)|\k<n>", r"a|\k<n>(?<n>b)",
+        r"^(?:(?<n>a)|b)+\k<n>$", r"(?:(a)|b)+\1", r"(?:(a)?b)*\1", r"(?:(a)|b){1,2}\1", r"(?<!(a))\1",   # a repeating ancestor / lookbehind
+        r"(?<=(a)\1)b", r"(?<=([ab]){2})\1", r"(?<=(a))\1", r"(?<=\1(a))b", r"(?<m>)|\k<n>",
+        r"(a)*\1", r"(a)*x\1", r"(a){0,2}x\1", r"(b*)*x\1", r"(b|)*x\1", r"(a?){0,2}x\1", r"(?<m>b*)*x\k<m>", r"(b*)*\1",   # the group repeats
+        r"(?:(?=(a)))?a\1", r"(?=(a))?a\1", r"(?=(a)){0,1}a\1", r"(?<a>x)(?=(?<b>y))?y\k<b>", r"(?:(?=(a))x?)?a\1",   # empty iteration keeps a capture
+        r"(?=(a??)?)\1a", r"(?=(?:a??)?(b)?)a\1", r"(?=(a*?){0,1})[ab]*\1", r"(?=x(?<n>a??(x)*|){0,1})x\k<n>",   # a conditional reference into a lookahead
+        "(a)?" * 100 + r"x\100",   # `re` reads \100 as octal
     ],
 )
 def test_backreference_to_a_maybe_unset_group_fails_open(pattern: str) -> None:
     assert compile_regex(pattern) is None
+
+
+@pytest.mark.parametrize(
+    ("pattern", "text", "hit"),   # answers from node: an unset group (or a forward / self reference) reads empty
+    [
+        (r"^(a)?x\1$", "x", True), (r"^(a)?x\1$", "axa", True), (r"^(a)?x\1$", "ax", False), (r"^(?:b|\k<n>(?<n>b))$", "b", True),
+        (r"^(?:(a)|b)\1$", "aa", True), (r"^(?:(a)|b)\1$", "b", True), (r"^(?:(a)|b)\1$", "ba", False), (r"^(?:(a)|b)\1$", "a", False),
+        (r"^(?<q>[\"'])?x\k<q>$", "x", True), (r"^(?<q>[\"'])?x\k<q>$", '"x"', True), (r"^(?<q>[\"'])?x\k<q>$", "\"x", False),
+        (r"^(?<q>[\"'])?x\k<q>$", "'x'", True), (r"^(?<q>[\"'])?x\k<q>$", "'x\"", False),
+        (r"^\1(a)$", "a", True), (r"^\1(a)$", "aa", False), (r"^(a\1)$", "a", True), (r"^(?:\1(a))+$", "aa", True),
+        (r"^\k<n>(?<n>a)$", "a", True), (r"^(a)|b\1$", "b", True), (r"^(?!(a))\1b$", "b", True),
+        (r"^(a){00}x\1$", "x", True), (r"^(?:(a))?\1$", "", True), (r"^(?:(a)\1|b)$", "b", True),
+    ],
+)
+def test_backreference_to_a_maybe_unset_group_reads_empty(pattern: str, text: str, hit: bool) -> None:
+    rx = compile_regex(pattern)
+    assert rx is not None and (rx.search(text) is not None) is hit
+
+
+def test_fail_open_rules_leave_plain_lookahead_and_group_99_compiled() -> None:
+    assert (rx := compile_regex(r"(?=(a))a\1")) is not None and rx.fullmatch("aa")   # node: true
+    assert (rx := compile_regex("(a)?" * 99 + r"x\99")) is not None and rx.fullmatch("a" * 99 + "xa")   # node: true
 
 
 def test_run_of_k_openers_is_linear_literal_text() -> None:
@@ -477,6 +502,14 @@ def test_run_of_k_openers_is_linear_literal_text() -> None:
 
 def test_run_of_group_openers_is_linear() -> None:
     compile_regex("(?<" * 20000 + ">\\1")   # None is fine; the name scan stops at the next `<` (was quadratic)
+
+
+@pytest.mark.parametrize("core", ["(a)?", "(a)"])
+def test_deep_nesting_with_many_references_scans_in_linear_time(core: str) -> None:
+    d = 4000
+    t = time.perf_counter()
+    _scan_groups("(?:" * d + core + ")" * d + "\\1" * d)   # was O(depth * references): ~1 s
+    assert time.perf_counter() - t < 0.5
 
 
 @pytest.mark.parametrize(
