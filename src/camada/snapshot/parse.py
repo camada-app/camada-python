@@ -173,7 +173,9 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
     An astral char is one code point here and two UTF-16 units in JS, so `.`, `[^a]` and `\S` count it
     once (an accepted gap, camada-all-vuvo). A backreference to a group that may not have captured on that pass
     reads empty in JS and fails in `re`: _scan_groups marks it for a translation that reads empty too, or (a repeating
-    ancestor, where JS resets the capture per iteration) fails open. Callers pass regex flags (regex.IGNORECASE), not re's."""
+    ancestor, where JS resets the capture per iteration) fails open.
+    A JS modifier group `(?i:...)` fails open: V8 mis-evaluates it (camada-all-lsl8), so Python's spec answer cannot match it.
+    Callers pass regex flags (regex.IGNORECASE), not re's."""
     try:
         scan = _scan_groups(pattern)
         if scan[1]:
@@ -187,6 +189,7 @@ _JS_BRACE = re.compile(r"\{([0-9]+)(?:(,)([0-9]*))?\}")   # optional group: no q
 _RE_MAX_BOUND = 65535   # same as camada-php: above any path or header a request carries (pathsRegex runs uncapped)
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
+_JS_MODIFIER = re.compile(r"\(\?[ims-]+:")   # `(?i:`, `(?-i:`, `(?i-m:`: a JS modifier group
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
 _JS_BACKREF = re.compile(r"\\k<([^<>]+)>")   # a JS name holds no `<` or `>`: linear on a run of `\k<`
 _JS_REF = re.compile(r"\\(?:k<([^<>]+)>|([1-9][0-9]*))")   # a named or numbered backreference: group 1 or 2
@@ -461,6 +464,8 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
             out.append("[")
             i += 1
             continue
+        if ch == "(" and _JS_MODIFIER.match(pattern, i):
+            raise ValueError("JS modifier group")   # compile_regex fails open: V8 mis-evaluates it (camada-all-lsl8)
         if ch == "(" and _JS_NAMED_GROUP.match(pattern, i):
             out.append("(?P<")
             i += 3
