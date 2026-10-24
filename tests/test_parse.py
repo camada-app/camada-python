@@ -385,7 +385,7 @@ def test_literal_bracket_in_class_compiles_without_warning() -> None:
     [
         ("[a&&b]", "&ab"), ("[a||b]", "ab|"), ("[a~~b]", "ab~"), ("[&&&]", "&"),
         ("[!--]", "".join(map(chr, range(33, 46)))), ("[+--]", "+,-"), ("[a-c--]", "-abc"),
-        ("[--a]", "".join(map(chr, range(45, 98)))),
+        ("[--a]", "".join(map(chr, range(45, 98)))), (r"[\cA--]", "".join(map(chr, range(1, 46)))),
     ],
 )
 def test_doubled_class_operator_chars_are_members_without_a_warning(pattern: str, matches: str) -> None:
