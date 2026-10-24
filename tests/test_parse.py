@@ -584,13 +584,13 @@ def test_non_flag_groups_still_compile(pattern: str, text: str) -> None:
     assert rx is not None and rx.search(text)
 
 
-@pytest.mark.parametrize("pattern", ["b(){65535}c", "b(){99999999999}c", "b(()){4000}c", "b(){1000,}c"])
+@pytest.mark.parametrize("pattern", ["b(){65535}c", "b(){99999999999}c", "b(()){4000}c", "b(){1000,}c", "b(?<n>){65535}c", "b((?:)){65535}c", "b((){1}){65535}c", "b(?:()){65535}c", "b(){65535}?c", "b(){0065535}c"])
 def test_compile_regex_fails_open_on_a_huge_repeat_of_an_empty_group(pattern):
     start = time.monotonic()
     assert compile_regex(pattern) is None
     assert time.monotonic() - start < 1
 
 
-@pytest.mark.parametrize("pattern", ["b(){999}c", "b(a){65535}c", r"b\(\){65535}c"])
+@pytest.mark.parametrize("pattern", ["b(){999}c", "b(a){65535}c", r"b\(\){65535}c", "b(a()){65535}c", r"b(\(\)){65535}c"])
 def test_compile_regex_keeps_other_repeats(pattern):
     assert compile_regex(pattern) is not None
