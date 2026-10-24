@@ -355,6 +355,19 @@ def test_js_dot_empty_class_and_unicode_space(pattern: str, text: str, expect: b
     assert rx is not None and (rx.search(text) is not None) is expect
 
 
+@pytest.mark.parametrize(
+    ("pattern", "text", "expect"),
+    [
+        (r"^.$", "\U0001F600", True), (r"^..$", "\U0001F600", False), (r"^.{2}$", "\U0001F600", False),
+        (r"^[^a]$", "\U0001F600", True), (r"^\S$", "\U0001F600", True),
+        (r"^a.*b$", "a\U0001F600b", True),
+    ],
+)
+def test_astral_char_is_one_code_point_accepted_gap_vs_js_camada_all_vuvo(pattern: str, text: str, expect: bool) -> None:
+    rx = compile_regex(pattern)
+    assert rx is not None and (rx.search(text) is not None) is expect
+
+
 @pytest.mark.parametrize("pattern", [r"[a\s-", r"[\s-"])
 def test_unterminated_class_after_s_dash_fails_open(pattern: str) -> None:
     assert compile_regex(pattern) is None
