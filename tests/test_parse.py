@@ -363,6 +363,20 @@ def test_js_dot_empty_class_and_unicode_space(pattern: str, text: str, expect: b
     assert rx is not None and (rx.search(text) is not None) is expect
 
 
+@pytest.mark.parametrize(
+    ("pattern", "text", "expect"),
+    [
+        ("^a{1,99999999999}$", "a", True), ("^a{1,99999999999}$", "b", False),
+        ("^a{99999999999}$", "a", False), ("^a{99999999999,}$", "a", False),
+        ("^(?:ab){1,99999999999}$", "abab", True), ("^(?:ab){1,99999999999}$", "aba", False),
+        ("^a{2,3}$", "aa", True), ("^a{2,3}$", "a", False), ("^a{2,3}$", "aaaa", False),
+    ],
+)
+def test_quantifier_bound_above_maxrepeat_is_clamped(pattern: str, text: str, expect: bool) -> None:
+    rx = compile_regex(pattern)
+    assert rx is not None and (rx.search(text) is not None) is expect
+
+
 @pytest.mark.parametrize("pattern", [r"[a\s-", r"[\s-"])
 def test_unterminated_class_after_s_dash_fails_open(pattern: str) -> None:
     assert compile_regex(pattern) is None
