@@ -564,15 +564,18 @@ def test_deeply_nested_groups_fail_open() -> None:
 
 @pytest.mark.parametrize("pattern", [
     r"(?:(a{0,2}))((\b\3)*?)?(?i:\1|[^a]*)+?", "(?i:googlebot|bingbot)", "(?-i:a)", "(?s:.)", "(?m:a$)", "(?i-m:a)", "x(?i:a)",
+    "a(?i)b", "(?i)admin", "(?x:a b)", "(?^i:a)", "(?-i)a", "(?s)a.b", "(?R)", "x(?im-s)y",
+    "(?iV0)admin", "(?V0i:a)", "a(?V0)b", "(?V0-i:a)",
 ])
-def test_modifier_group_fails_open(pattern: str) -> None:
-    assert compile_regex(pattern) is None   # V8 mis-evaluates it (camada-all-lsl8)
+def test_inline_flag_group_fails_open(pattern: str) -> None:
+    assert compile_regex(pattern) is None   # JS rejects it or V8 mis-evaluates it (camada-all-lsl8)
     assert compile_path_regex(pattern) is None
 
 
 @pytest.mark.parametrize(("pattern", "text"), [
     ("[(?i:a)]", "i"), (r"\(?i:a\)", "(i:a)"), ("(?:a)", "a"), ("(?<n>a)", "a"), ("(?=a)a", "a"), ("(?<!a)b", "b"),
+    ("[(?i)]", "i"), (r"\(?i\)", "(i)"),
 ])
-def test_non_modifier_groups_still_compile(pattern: str, text: str) -> None:
+def test_non_flag_groups_still_compile(pattern: str, text: str) -> None:
     rx = compile_regex(pattern)
     assert rx is not None and rx.search(text)
