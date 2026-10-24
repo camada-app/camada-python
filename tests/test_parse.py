@@ -591,6 +591,6 @@ def test_compile_regex_fails_open_on_a_huge_repeat_of_an_empty_group(pattern):
     assert time.monotonic() - start < 1
 
 
-@pytest.mark.parametrize("pattern", ["b(){999}c", "b(a){65535}c", r"b\(\){65535}c", "b(a()){65535}c", r"b(\(\)){65535}c"])
+@pytest.mark.parametrize("pattern", ["b(){999}c", "b(a){65535}c", r"b\(\){65535}c", "b(a()){65535}c", r"b(\(\)){65535}c", "b({,}){1000}c", "b({}){1000}c", "b({,5}){1000}c"])
 def test_compile_regex_keeps_other_repeats(pattern):
     assert compile_regex(pattern) is not None
