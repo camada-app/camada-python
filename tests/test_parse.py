@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import struct
+import time
 import warnings
 from typing import Any
 
 import pytest
 
 from camada.snapshot.match import Matcher, MatchInput
-from camada.snapshot.parse import _JS_BRACE, _js_to_re, compile_regex, parse_snapshot
+from camada.snapshot.parse import _JS_BRACE, _js_to_re, _scan_groups, compile_regex, parse_snapshot
 
 from .conftest import read_bin, read_json
 
@@ -493,6 +494,14 @@ def test_run_of_k_openers_is_linear_literal_text() -> None:
 
 def test_run_of_group_openers_is_linear() -> None:
     compile_regex("(?<" * 20000 + ">\\1")   # None is fine; the name scan stops at the next `<` (was quadratic)
+
+
+@pytest.mark.parametrize("core", ["(a)?", "(a)"])
+def test_deep_nesting_with_many_references_scans_in_linear_time(core: str) -> None:
+    d = 4000
+    t = time.perf_counter()
+    _scan_groups("(?:" * d + core + ")" * d + "\\1" * d)   # was O(depth * references): ~1 s
+    assert time.perf_counter() - t < 0.5
 
 
 @pytest.mark.parametrize(
