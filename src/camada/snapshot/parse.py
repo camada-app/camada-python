@@ -187,6 +187,10 @@ _JS_DOT = r"[^\n\r\u2028\u2029]"
 _JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
 
 
+def _over_bound(d: str) -> bool:
+    return len(d.lstrip("0")) > 5 or int(d) > _RE_MAX_BOUND   # length first: int() refuses a huge digit string
+
+
 def _js_to_re(pattern: str) -> str:
     r"""The JS-only spellings a tenant is likely to author: `(?<name>` -> `(?P<name>`, `\k<name>` -> `(?P=name)`, `[^]` (any
     char) -> `[\s\S]`, `\cX` -> the control character, a `{` that is no JS quantifier (`{,3}`,
@@ -296,11 +300,9 @@ def _js_to_re(pattern: str) -> str:
                 i += 1
                 continue
             lo, comma, hi = brace.groups()
-            def over(d: str) -> bool:   # len check first: int() raises on a huge digit string
-                return len(d.lstrip("0")) > 5 or int(d) > _RE_MAX_BOUND
-            if over(lo):
+            if _over_bound(lo):
                 lo = str(_RE_MAX_BOUND)
-            if hi and over(hi):
+            if hi and _over_bound(hi):
                 hi = ""   # an upper bound past it never binds a real input, so drop it
             out.append(f"{{{lo}{comma or ''}{hi}}}")
             i = brace.end()
