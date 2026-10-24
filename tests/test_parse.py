@@ -472,6 +472,8 @@ def test_named_mode_needs_a_real_group(pattern: str, text: str, hit: bool) -> No
         "(a)" * 150 + r"\150", "(a)" * 100 + r"\100",   # same for a group that always captured
         r"(b*)+x\1", r"(b|)+x\1", r"(a?)+x\1", r"\1(b*)+x\1", r"(?:(b*))+x\1", r"(?<m>b*)+x\k<m>", r"(\x41?)+x\1",   # a repeat that can
         r"(é?)+x\1", r"([a]?)+x\1", r"(a{0,2})+x\1", r"(?:(a)|)+x\1", r"((?=a))+x\1",                  # match empty keeps JS's capture
+        r"((?i:a?))+x\1", r"((?i-m:a?))+x\1", r"((?-i:a?))+x\1", r"((?m:b*))+x\1",   # modifier headers are no atoms
+        r"(?:(?i:(b*)))+x\1", r"(?i:(b*))+x\1", r"(?<m>(?i:b*))+x\k<m>",
     ],
 )
 def test_backreference_to_a_maybe_unset_group_fails_open(pattern: str) -> None:
