@@ -346,6 +346,7 @@ def test_s5_raw_over_cap_but_stripped_under_cap_deny_hits_skip_misses() -> None:
         (r"^[\s\S]$", "\n", True), (r"^[^\s\S]$", "a", False),
         (r"^[\s-a-z]$", "b", False), (r"^[\s-a-z]$", "-", True), (r"^[\s-a-z]$", "z", True),
         (r"^[\s^]$", "^", True), (r"^[\s^]$", " ", True), (r"^[\S]$", " ", False), (r"^[\S1]$", "1", True),
+        (r"^\s$", " ", True), (r"^\S$", " ", False),
     ],
 )
 def test_js_dot_empty_class_and_unicode_space(pattern: str, text: str, expect: bool) -> None:
