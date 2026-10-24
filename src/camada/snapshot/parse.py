@@ -203,7 +203,7 @@ class _Frame:
     lb: bool = False   # lookbehind (positive or negative)
     end: int = -1   # index of its `)`, -1 while open
     rep: bool = False   # repeat-quantified (`+` `*` `{n,}` `{n}` n>1 `{n,m}` m>1)
-    la: bool = False   # positive lookahead
+    la: bool = False   # positive lookahead (a negative one never keeps a capture)
 
 
 _Scan = tuple[bool, bool, dict[int, tuple[int, bool]]]
@@ -216,9 +216,9 @@ def _scan_groups(pattern: str) -> _Scan:
     the reference (forward or self) is always empty: False. One whose group sits under a min-0 quantifier or a negative
     lookaround (itself or any ancestor), or lies in an alternation branch (an ancestor or the top level has a `|`), may
     be unset: True. Fail open instead when the group or an ancestor repeats (JS resets captures per iteration, `re` keeps them, and
-    a repeating group that matches empty overwrites its capture in `re` where JS rejects that iteration), when a positive lookahead
-    at or above the group sits under a min-0 quantifier (JS drops the empty iteration's capture, `re` keeps it), or for a numbered
-    reference past group 99 (`re` reads the rewritten `\100` as octal).
+    a repeating group that matches empty overwrites its capture in `re` where JS rejects that iteration), when the group is
+    inside a positive lookahead (JS rejects an empty optional iteration and tries paths in another order, a lookahead keeps its first),
+    or for a numbered reference past group 99 (`re` reads the rewritten `\100` as octal).
     A backreference inside a lookbehind, or to a group with a lookbehind ancestor, also diverges: JS matches a lookbehind right
     to left (so "closed before the reference" is backwards there, and a quantified group keeps its leftmost repetition).
     With named groups present, a `\k<name>` that names no group is a JS SyntaxError, so it fails open. Frames are created
@@ -262,16 +262,14 @@ def _scan_groups(pattern: str) -> _Scan:
             fr.min0 = pattern.startswith(("?", "*"), i + 1) or (b is not None and not b[1].strip("0"))
             fr.rep = pattern.startswith(("+", "*"), i + 1) or (b is not None and (b[2] and not b[3] or _num(b[3] or b[1]) > (1, "1")))
         i += 1
-    # per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a min-0 quantifier at or above,
-    # a positive lookahead at or above that min-0 quantifier or inside one
-    in_lb, unset, rep_above, min0_up, la_min0 = [False], [False], [False], [False], [False]
+    # per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a positive lookahead at or above
+    in_lb, unset, rep_above, in_la = [False], [False], [False], [False]
     for fr in frames[1:]:
         p = frames[fr.parent]
         in_lb.append(fr.lb or in_lb[fr.parent])
         unset.append(fr.min0 or fr.neg or p.alt or unset[fr.parent])
         rep_above.append(p.rep or rep_above[fr.parent])
-        min0_up.append(fr.min0 or min0_up[fr.parent])
-        la_min0.append(fr.la and min0_up[-1] or la_min0[fr.parent])
+        in_la.append(fr.la or in_la[fr.parent])
     names = {g[1]: k for k, g in enumerate(groups) if g[1] is not None}
     for ref, is_name, at, end, home in refs:
         if is_name:
@@ -288,7 +286,7 @@ def _scan_groups(pattern: str) -> _Scan:
         if not 0 <= frames[g].end < at:
             marks[at] = end, False
         elif unset[g]:
-            if rep_above[g] or frames[g].rep or la_min0[g] or not is_name and k > 98:
+            if rep_above[g] or frames[g].rep or in_la[g] or not is_name and k > 98:
                 return named, True, {}
             marks[at] = end, True
     return named, False, marks
