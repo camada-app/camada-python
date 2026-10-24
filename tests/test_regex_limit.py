@@ -88,12 +88,12 @@ def test_memory_error_pattern_answers_on_error() -> None:
     import regex
 
     rx = regex.compile(MEMORY_ERROR_PATTERN)
-    with pytest.raises(MemoryError):   # the unbounded search is what raises; the 50 ms limit usually times out first
+    with pytest.raises(MemoryError) as err:   # the unbounded search raises; the 50 ms limit usually times out first
         rx.search("aaba")
 
-    class Unbounded:   # regex_hit's search without the limit: the failure mode the ticket saw
+    class Unbounded:   # regex_hit's search without the limit: the failure mode the ticket saw (replays the one real error)
         def search(self, s: str, timeout: float) -> object:
-            return rx.search(s)
+            raise err.value
 
     assert paths.regex_hit(Unbounded(), "aaba", True) is True  # type: ignore[arg-type]
     assert paths.regex_hit(Unbounded(), "aaba", False) is False  # type: ignore[arg-type]
