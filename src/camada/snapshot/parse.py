@@ -206,6 +206,15 @@ _JS_DOT = r"[^\n\r\u2028\u2029]"
 _JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
 
 
+def _empty_repeat_product(span: str) -> int:
+    """The product of the largest bound of every `{n}` `{n,}` `{n,m}` in an all-empty group span (nested counts multiply)."""
+    prod = 1
+    for m in _JS_BRACE.finditer(span):
+        lo, hi = (min(int(x), _RE_MAX_BOUND) if x and len(x) < 6 else _RE_MAX_BOUND if x else 0 for x in (m[1], m[3]))
+        prod = min(prod * max(lo, hi, 1), _RE_MAX_BOUND * 2)
+    return prod
+
+
 _HEADER = re.compile(r"\(\?(?:<[=!]|<[^<>]*>|[A-Za-z-]*:|[=!])")   # a group opener, bounded: lookbehind, name, flags, lookahead
 
 
@@ -515,8 +524,9 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
         elif ch == "{" and (brace := _JS_BRACE.match(pattern, i)):
             lo, comma, hi = brace.groups()
             lo_n, hi_n = _num(lo), (_num(hi) if hi else None)
-            if len(lo_n[1]) > 3 and last_group[1] == i - 1 and not _JS_GROUP_SHELL.sub("", pattern[last_group[0] : i]):
-                raise ValueError("huge repeat of an empty group")   # fail open: `regex` compiles `b(){65535}c` in minutes (camada-all-fe5v)
+            if last_group[1] == i - 1 and not _JS_GROUP_SHELL.sub("", body := pattern[last_group[0] : i]):
+                if _empty_repeat_product(body + brace[0]) >= 1000:
+                    raise ValueError("huge repeat of an empty group")   # fail open: `regex` compiles `b(){65535}c` and `b((){999}){999}c` in seconds to minutes (camada-all-fe5v, camada-all-8fg6)
             if hi_n is not None and lo_n > hi_n:
                 out.append(brace[0])   # m > n is a JS SyntaxError: leave it so re rejects it too
             else:
