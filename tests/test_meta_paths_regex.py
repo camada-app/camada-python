@@ -27,9 +27,9 @@ def test_meta_paths_regex_refused_pattern_never_matches() -> None:
 
 def test_meta_paths_regex_over_cap_path_blocks() -> None:
     m = meta_matcher(["^/never$"])
-    over = m.match(MatchInput(path="/" + "a" * 2048))   # 2049 UTF-16 units
+    over = m.match(MatchInput(path="/" + "a" * paths.MAX_MATCH_INPUT))   # one unit over the cap
     assert over.block is True and over.reason == "path"
-    assert m.match(MatchInput(path="/" + "a" * 2047)).block is False
+    assert m.match(MatchInput(path="/" + "a" * (paths.MAX_MATCH_INPUT - 1))).block is False
 
 
 def test_meta_paths_regex_shares_the_walk_budget() -> None:

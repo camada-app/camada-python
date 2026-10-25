@@ -54,7 +54,10 @@ _budget = threading.local()   # .left: seconds still spendable by the walk runni
 
 @contextmanager
 def request_regex_budget() -> Iterator[None]:
-    """The rule walk for one request runs inside this: its regexes share REQUEST_REGEX_BUDGET_MS."""
+    """One request's Matcher.match decision (rule walk plus the block side's meta pathsRegex) runs inside this.
+
+    Its regexes share REQUEST_REGEX_BUDGET_MS.
+    """
     _budget.left = REQUEST_REGEX_BUDGET_MS / 1000
     try:
         yield
