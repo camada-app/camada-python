@@ -34,7 +34,7 @@ from typing import Any
 import regex
 
 from ..ipparse import Words
-from .paths import PathForms, canon_path, dir_key, over_cap, path_hit, path_pred, regex_hit
+from .paths import PathForms, PathPred, canon_path, dir_key, over_cap, path_hit, path_pred, regex_hit
 
 Bits = memoryview   # a uint32 view: memoryview.cast('I')
 
@@ -113,7 +113,7 @@ class Snapshot:
     tls: frozenset[str]
     paths_exact: frozenset[str]
     paths_prefix: frozenset[str]
-    paths_regex: list[regex.Pattern[str]]
+    paths_regex: list[PathPred]
     allow: RangeSet
     challenge: RangeSet
     rules: list[CompiledRule] = field(default_factory=list)   # v5 only; empty on v3/v4, and the matcher then skips them
@@ -193,7 +193,7 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
 
 
 _JS_BRACE = re.compile(r"\{([0-9]+)(?:(,)([0-9]*))?\}")   # optional group: no quadratic backtrack on `{11...` sans `}`
-_RE_MAX_BOUND = 65535   # same as camada-php: above any path or header a request carries (pathsRegex runs uncapped)
+_RE_MAX_BOUND = 65535   # same as camada-php: above any path or header a request carries (a path over the cap never reaches the regex)
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
 _JS_NON_GROUP = re.compile(r"\((?:\*|\?(?![:=!<]))")   # a `(?` or `(*` opening none of the JS forms `(?:` `(?=` `(?!` `(?<`
@@ -792,7 +792,7 @@ def parse_snapshot(binary: bytes | bytearray | memoryview, meta: dict[str, Any])
         tls=frozenset(meta.get("tls") or []),
         paths_exact=frozenset(canon_path(p) for p in meta.get("pathsExact") or []),
         paths_prefix=frozenset(dir_key(p) for p in meta.get("pathsPrefix") or []),
-        paths_regex=[rx for rx in (compile_path_regex(p) for p in meta.get("pathsRegex") or []) if rx is not None],
+        paths_regex=[path_pred("matches", [str(p)], compile_path_regex, True) for p in meta.get("pathsRegex") or []],
         allow=_range_set(sec.get(10, _EMPTY), sec.get(11, _EMPTY), meta.get("allow")),
         challenge=_range_set(sec.get(12, _EMPTY), sec.get(13, _EMPTY), meta.get("challenge")),
         rules=_compile_rules(meta, rule4, rule6),
