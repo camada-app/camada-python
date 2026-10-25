@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from camada.snapshot.paths import canon_path, path_forms
+from camada.snapshot.paths import canon_path, path_forms, path_hit
 
 CASES = [
     ("/", ("/", "/", "/")),
@@ -41,3 +41,28 @@ def test_canon_is_idempotent() -> None:
 def test_raw_control_chars_are_percent_encoded_lower_case_in_the_raw_form() -> None:
     assert path_forms("/a\nb\x00\x7f") == ("/a%0ab%00%7f", "/a%0ab%00%7f", "/a%0ab%00%7f")
     assert path_forms("/api/v2/dump\n")[0] == "/api/v2/dump%0a"
+
+
+def _count(forms, deny, hit=()):
+    calls = []
+
+    def pred(p):
+        calls.append(p)
+        return p in hit
+
+    return path_hit(pred, forms, deny), len(calls)
+
+
+def test_path_hit_tries_a_repeated_form_once():
+    same = path_forms("/blocked-path")
+    assert len(set(same)) == 1
+    assert _count(same, True) == (False, 1)
+    assert _count(same, False) == (False, 1)
+    assert _count(same, True, {"/blocked-path"}) == (True, 1)
+    assert _count(same, False, {"/blocked-path"}) == (True, 1)
+    distinct = ("/a", "/b", "/c")
+    assert _count(distinct, True) == (False, 3)
+    assert _count(distinct, True, {"/c"}) == (True, 3)
+    assert _count(distinct, False, {"/b"}) == (False, 2)
+    assert _count(distinct, False, {"/b", "/c"}) == (True, 2)
+    assert _count(("/a", "/b", "/b"), True) == (False, 2)
