@@ -49,12 +49,15 @@ def over_cap(v: str) -> bool:
     return utf16_len(v) > MAX_MATCH_INPUT
 
 
-_budget = threading.local()   # .left: seconds still spendable by the walk running on this thread, absent outside a walk
+_budget = threading.local()   # .left: seconds still spendable by the request's decision (walk plus meta pathsRegex); absent outside
 
 
 @contextmanager
 def request_regex_budget() -> Iterator[None]:
-    """The rule walk for one request runs inside this: its regexes share REQUEST_REGEX_BUDGET_MS."""
+    """One request's Matcher.match decision (rule walk plus the block side's meta pathsRegex) runs inside this.
+
+    Its regexes share REQUEST_REGEX_BUDGET_MS.
+    """
     _budget.left = REQUEST_REGEX_BUDGET_MS / 1000
     try:
         yield
@@ -63,7 +66,8 @@ def request_regex_budget() -> Iterator[None]:
 
 
 def regex_hit(rx: regex.Pattern[str], s: str, on_error: bool) -> bool:
-    """rx.search(s) under the per-match limit and, in a walk, what is left of the request's budget.
+    """rx.search(s) under the per-match limit and what is left of the request's budget, within the request's
+    decision (rule walk plus the block side's meta pathsRegex).
     A spent budget, a timeout or a regex runtime failure (MemoryError, RuntimeError) answers `on_error`
     (a deny rule hits, a skip rule misses), like over-cap."""
     left: float | None = getattr(_budget, "left", None)
