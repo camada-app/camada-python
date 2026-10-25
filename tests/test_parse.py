@@ -663,6 +663,9 @@ def test_nested_optional_nullable_repeats_match_js_or_fail_open(pattern: str, te
     (r"^(?:(c*)?(?:c?)+x\1)$", ["ccx"]),
     (r"^(?:((c*)?(?:c?)+){1,1}x\2)$", ["ccx"]),
     (r"^(?:(c?((?:(c?)*)){1,1}b?)x\2)$", ["ccxcc"]),
+    (r"^(\w?)\w*(?:-\1)?$", ["a-"]),   # camada-all-uggv: no lazy quantifier needed
+    (r"^(b?)b*(?:x\1)?$", ["bx"]),
+    (r"(b?)b*(?:x\1)?b?", ["bx"]),
 ])
 def test_lazy_or_sibling_nullable_repeat_before_reference_matches_js_or_fails_open(pattern: str, texts: list[str]) -> None:
     # camada-all-6ikm, camada-all-d8x4: node matches every subject; `regex` read another capture
