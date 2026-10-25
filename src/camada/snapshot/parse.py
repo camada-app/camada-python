@@ -291,7 +291,6 @@ class _Frame:
     opt: bool = False   # rep with iterations past its minimum (not `{n}` / `{n,n}`)
     kid: bool = False   # a frame inside it repeats optionally (min-0 or repeat) over a nullable body
     start: int = 0   # index of its `(`
-    lazy: bool = False   # it or a frame inside it holds a lazy quantifier (`??` `*?` `+?` `}?`)
 
 
 _Scan = tuple[bool, bool, dict[int, tuple[int, bool]]]
@@ -324,8 +323,8 @@ def _scan_groups(pattern: str) -> _Scan:
     has iterations past its minimum and can match empty: JS rejects an empty one and keeps the previous capture, `re`
     takes it and overwrites the capture with ''. It fails open as well when that group can match empty and a repeat over a nullable
     body that is min-0 or repeating closes between the group and the reference, or when the group holds such a repeat inside (`re`
-    reads another capture than JS, camada-all-d8x4), or when the group can match empty, holds a lazy quantifier and the reference
-    sits in a min-0 group opened after it (`(b??){3}(?:x\1)?`, camada-all-6ikm).
+    reads another capture than JS, camada-all-d8x4), or when the group can match empty and the reference
+    sits in a min-0 group opened after it (`(b??){3}(?:x\1)?`, camada-all-6ikm; `^(b?)b*(?:x\1)?$`, camada-all-uggv).
     The same walk tracks per frame whether the current branch holds an atom that must consume input (`solid`: a literal, `.`,
     a class or a letter escape not followed by a min-0 quantifier, or a non-nullable group) and whether the body can match
     empty (`nullable`: a branch without one, or a lookaround). Anything unsure counts as nullable, which only fails open;
@@ -402,14 +401,11 @@ def _scan_groups(pattern: str) -> _Scan:
             fr.holds |= (fr.min0 or fr.rep) and fr.nullable
             frames[fr.parent].holds |= fr.holds
             frames[fr.parent].kid |= fr.holds
-            frames[fr.parent].lazy |= fr.lazy
             if (fr.min0 or fr.rep) and fr.nullable:
                 rn_starts.append(fr.start)
                 rn_ends.append(fr.end)
             if not fr.nullable and not fr.min0:
                 frames[fr.parent].solid = True
-        elif ch == "?" and i > quiet and pattern[i - 1] in "?*+}":   # the `?` after a quantifier makes it lazy
-            frames[stack[-1]].lazy = True
         elif ch not in "^$)?*+" and i >= quiet:
             if ch == "{" and (b := _JS_BRACE.match(pattern, i)):   # a quantifier, no atom
                 i = b.end()
@@ -458,7 +454,7 @@ def _scan_groups(pattern: str) -> _Scan:
             return named, True, {}
         elif frames[g].nullable and (
             frames[g].kid or min_end[bisect.bisect_right(starts, frames[g].end)] < at
-            or frames[g].lazy and ms[home] > frames[g].end
+            or ms[home] > frames[g].end
         ):
             return named, True, {}
         elif unset[g]:
