@@ -304,7 +304,7 @@ def _min0_at(pattern: str, j: int) -> bool:
 
 
 def _scan_groups(pattern: str) -> _Scan:
-    r"""(a real `(?<name>` group exists, the pattern must fail open, {reference index: (its end index, True for a conditional
+    r"""(a `(?<name>` group and a reference exist, the pattern must fail open, {reference index: (its end index, True for a conditional
     `(?(g)\g)`, False for `(?:)`)}): one escape- and class-aware walk (a class opens at an unescaped `[`, `[` is literal inside, the first
     unescaped `]` closes it). JS reads a reference to an unset group as empty. A reference whose group is still open at
     the reference (forward or self) is always empty: False. One whose group sits under a min-0 quantifier or a negative
@@ -338,6 +338,8 @@ def _scan_groups(pattern: str) -> _Scan:
         ch = pattern[i]
         if ch == "\\":
             if in_class:
+                if pattern.startswith("k", i + 1):   # `[\k]` is a SyntaxError beside named groups
+                    refs.append(("", True, i, i + 2, stack[-1]))
                 i += 2
                 continue
             if m := _JS_REF.match(pattern, i):
@@ -348,6 +350,8 @@ def _scan_groups(pattern: str) -> _Scan:
                 else:
                     i = m.end()
                 continue
+            if pattern.startswith("k", i + 1):   # a bare `\k`: a SyntaxError beside named groups (no name is empty)
+                refs.append(("", True, i, i + 2, stack[-1]))
             em = _JS_ESC.match(pattern, i)
             j = em.end() if em else n
             if em and em[0] not in ("\\b", "\\B", "\\c", "\\k") and not _min0_at(pattern, j):
@@ -397,6 +401,8 @@ def _scan_groups(pattern: str) -> _Scan:
             if not _min0_at(pattern, i + 1):
                 frames[stack[-1]].solid = True
         i += 1
+    if not refs:
+        return False, False, {}   # `\\1` (an escaped backslash) or `[\1]` (a class) is no reference
     # per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a positive lookahead at or above
     in_lb, unset, rep_above, in_la, rn = [False], [False], [False], [False], [-1]   # rn: end of nearest opt+nullable frame
     la_div = [False]   # a positive lookahead at or above holds an optional nullable repeat
@@ -453,7 +459,9 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
     matches before a trailing newline). `\<letter>` outside JS's escape set is the bare letter, as JS reads it
     without `u` (`\p{L}` is "p{L}", `\A` is "A"). `.` outside a class excludes \n \r U+2028 U+2029 as in JS; `[]`
     never matches (`(?!)`) and a `]` outside a class is text; `\s`/`\S` are JS's Unicode whitespace (inside a class
-    they become a union with the rest of it, and a `-` beside one stays a literal dash). Anything else `re` rejects still fails open."""
+    they become a union with the rest of it, and a `-` beside one stays a literal dash). Anything else `re` rejects still fails open.
+    Raises ValueError on a non-JS `(?`/`(*` group, a duplicate group name or a huge repeat of an empty group, so compile_regex
+    fails open."""
     out: list[str] = []
     i, n, in_class = 0, len(pattern), False
     start, neg, pulled, pulled_end, solo_end = 0, False, [], -1, -1   # the open class: its `[` index in out, negation, \s/\S pulled out
