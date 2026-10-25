@@ -289,6 +289,9 @@ class _Frame:
     nullable: bool = False   # the body can match empty (a branch with no such atom, or a lookaround)
     holds: bool = False   # it or a frame inside it repeats optionally (min-0 or repeat) over a nullable body
     opt: bool = False   # rep with iterations past its minimum (not `{n}` / `{n,n}`)
+    kid: bool = False   # a frame inside it repeats optionally (min-0 or repeat) over a nullable body
+    start: int = 0   # index of its `(`
+    lazy: bool = False   # it or a frame inside it holds a lazy quantifier (`??` `*?` `+?` `}?`)
 
 
 _Scan = tuple[bool, bool, dict[int, tuple[int, bool]]]
@@ -319,18 +322,24 @@ def _scan_groups(pattern: str) -> _Scan:
     in `(` order, so one forward pass gives each its inherited flags and every reference is classified in O(1).
     A plain reference (group closed before it) also fails open when the group or an ancestor that closes before the reference
     has iterations past its minimum and can match empty: JS rejects an empty one and keeps the previous capture, `re`
-    takes it and overwrites the capture with ''. The same walk tracks per frame whether the current branch holds an atom that
-    must consume input (`solid`: a literal, `.`, a class or a letter escape not followed by a min-0 quantifier, or a
-    non-nullable group) and whether the body can match empty (`nullable`: a branch without one, or a lookaround). Anything unsure
-    counts as nullable, which only fails open; a reference inside the repeating frame reads its own iteration's capture and stays.
-    A plain reference to a group under a positive lookahead that holds an optional-iteration frame with a nullable body also fails
-    open: JS rejects that empty iteration, so the lookahead's first success, and the capture it keeps, differs from `re`'s."""
+    takes it and overwrites the capture with ''. It fails open as well when that group can match empty and a repeat over a nullable
+    body that is min-0 or repeating closes between the group and the reference, or when the group holds such a repeat inside (`re`
+    reads another capture than JS, camada-all-d8x4), or when the group can match empty, holds a lazy quantifier and the reference
+    sits in a min-0 group opened after it (`(b??){3}(?:x\1)?`, camada-all-6ikm).
+    The same walk tracks per frame whether the current branch holds an atom that must consume input (`solid`: a literal, `.`,
+    a class or a letter escape not followed by a min-0 quantifier, or a non-nullable group) and whether the body can match
+    empty (`nullable`: a branch without one, or a lookaround). Anything unsure counts as nullable, which only fails open;
+    a reference inside the repeating frame reads its own iteration's capture and stays.
+    A plain reference to a group under a positive lookahead that holds an optional-iteration frame with a nullable body also
+    fails open: JS rejects that empty iteration, so the lookahead's first success, and the capture it keeps, differs from `re`'s."""
     if not _JS_HAS_REF.search(pattern):
         return False, False, {}   # nothing reads the names or can diverge without a reference
     frames = [_Frame(-1)]
     stack = [0]
     groups: list[tuple[int, str | None]] = []   # (frame, name) in `(` order
     marks: dict[int, tuple[int, bool]] = {}
+    rn_starts: list[int] = []   # the frames repeating over a nullable body, as they close
+    rn_ends: list[int] = []
     refs: list[tuple[str, bool, int, int, int]] = []   # (name or number, is a name, index, end, enclosing frame)
     i, n, in_class, named = 0, len(pattern), False, False
     quiet = 0   # chars before this index (a group header, a `\k<name>`) are no atoms
@@ -369,7 +378,7 @@ def _scan_groups(pattern: str) -> _Scan:
             cap = not q or (pattern.startswith("<", i + 2) and pattern[i + 3 : i + 4] not in ("=", "!"))
             if q and cap:
                 named = True
-            frames.append(_Frame(stack[-1], neg=pattern.startswith(("?!", "?<!"), i + 1),
+            frames.append(_Frame(stack[-1], start=i, neg=pattern.startswith(("?!", "?<!"), i + 1),
                                  lb=pattern.startswith(("?<=", "?<!"), i + 1), la=pattern.startswith("?=", i + 1)))
             stack.append(len(frames) - 1)
             gm = _GROUP_NAME.match(pattern, i) if q and cap else None
@@ -392,8 +401,15 @@ def _scan_groups(pattern: str) -> _Scan:
             fr.nullable = fr.nullable or not fr.solid or fr.neg or fr.lb or fr.la
             fr.holds |= (fr.min0 or fr.rep) and fr.nullable
             frames[fr.parent].holds |= fr.holds
+            frames[fr.parent].kid |= fr.holds
+            frames[fr.parent].lazy |= fr.lazy
+            if (fr.min0 or fr.rep) and fr.nullable:
+                rn_starts.append(fr.start)
+                rn_ends.append(fr.end)
             if not fr.nullable and not fr.min0:
                 frames[fr.parent].solid = True
+        elif ch == "?" and i > quiet and pattern[i - 1] in "?*+}":   # the `?` after a quantifier makes it lazy
+            frames[stack[-1]].lazy = True
         elif ch not in "^$)?*+" and i >= quiet:
             if ch == "{" and (b := _JS_BRACE.match(pattern, i)):   # a quantifier, no atom
                 i = b.end()
@@ -405,6 +421,7 @@ def _scan_groups(pattern: str) -> _Scan:
         return False, False, {}   # `\\1` (an escaped backslash) or `[\1]` (a class) is no reference
     # per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a positive lookahead at or above
     in_lb, unset, rep_above, in_la, rn = [False], [False], [False], [False], [-1]   # rn: end of nearest opt+nullable frame
+    ms = [-1]   # start of the nearest min-0 frame at or above
     la_div = [False]   # a positive lookahead at or above holds an optional nullable repeat
     for fr in frames[1:]:
         p = frames[fr.parent]
@@ -413,7 +430,13 @@ def _scan_groups(pattern: str) -> _Scan:
         rep_above.append(p.rep or rep_above[fr.parent])
         in_la.append(fr.la or in_la[fr.parent])
         la_div.append(fr.la and fr.holds or la_div[fr.parent])
+        ms.append(fr.start if fr.min0 else ms[fr.parent])
         rn.append(fr.end if fr.opt and fr.nullable else rn[fr.parent])
+    order = sorted(range(len(rn_starts)), key=rn_starts.__getitem__)
+    starts = [rn_starts[j] for j in order]
+    min_end = [1 << 62] * (len(order) + 1)   # smallest end among the repeats starting at or after each slot
+    for j in range(len(order) - 1, -1, -1):
+        min_end[j] = min(min_end[j + 1], rn_ends[order[j]])
     names = {g[1]: k for k, g in enumerate(groups) if g[1] is not None}
     for ref, is_name, at, end, home in refs:
         if is_name:
@@ -432,6 +455,11 @@ def _scan_groups(pattern: str) -> _Scan:
         if not 0 <= frames[g].end < at:
             marks[at] = end, False
         elif not is_name and k > 98 or 0 <= rn[g] < at or la_div[g]:
+            return named, True, {}
+        elif frames[g].nullable and (
+            frames[g].kid or min_end[bisect.bisect_right(starts, frames[g].end)] < at
+            or frames[g].lazy and ms[home] > frames[g].end
+        ):
             return named, True, {}
         elif unset[g]:
             if rep_above[g] or frames[g].rep or in_la[g]:

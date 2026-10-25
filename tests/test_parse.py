@@ -653,3 +653,18 @@ def test_nested_optional_nullable_repeats_match_js_or_fail_open(pattern: str, te
     # camada-all-2rwg: node matches every subject; `re` once read these differently (no capture inside a lookahead)
     rx = compile_regex(pattern)
     assert rx is None or all(rx.search(t) for t in texts)
+
+
+@pytest.mark.parametrize("pattern, texts", [
+    (r"^(?:(b??)(b??)(?:x\2)?b?)$", ["bx", "bxb", "b"]),
+    (r"^(?:(b*?){4}(?:x\1)?b?)$", ["bx", "bxb", "b"]),
+    (r"^(?:(b??){3}(?:x\1)?)$", ["bx"]),
+    (r"^(?:(c*)?(?:c?)*x\1)$", ["ccx"]),
+    (r"^(?:(c*)?(?:c?)+x\1)$", ["ccx"]),
+    (r"^(?:((c*)?(?:c?)+){1,1}x\2)$", ["ccx"]),
+    (r"^(?:(c?((?:(c?)*)){1,1}b?)x\2)$", ["ccxcc"]),
+])
+def test_lazy_or_sibling_nullable_repeat_before_reference_matches_js_or_fails_open(pattern: str, texts: list[str]) -> None:
+    # camada-all-6ikm, camada-all-d8x4: node matches every subject; `regex` read another capture
+    rx = compile_regex(pattern)
+    assert rx is None or all(rx.search(t) for t in texts)
