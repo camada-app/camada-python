@@ -659,7 +659,7 @@ def _compile_cond(c: dict[str, Any], sets: list[tuple[Bits, Bits]], deny: bool =
     skip rule: its path conditions need every canonical spelling to match, a block's any one."""
     f, op = str(c.get("f", "")), str(c.get("op", ""))
     # camada-all-zpbv: a stored matches value that is empty or not a string never matches (no str() coercion).
-    if op == "matches" and (not isinstance(c.get("v"), str) or c["v"] == ""):
+    if op == "matches" and (not isinstance(v := c.get("v"), str) or v == ""):
         return lambda r: False
     if f == "path":   # every path op reads the canonical forms, never _field_value
         pv = c.get("v")
