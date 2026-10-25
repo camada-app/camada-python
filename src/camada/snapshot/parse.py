@@ -208,8 +208,8 @@ _JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
 
 _JS_TOKEN = re.compile(
     r"(?P<open>\((?:\?(?:(?P<look><?[=!])|:|<[^<>=!][^<>]*>))?)|(?P<close>\))|(?P<bar>\|)"
-    r"|(?P<q>[?*+]|\{(?P<lo>[0-9]+)(?:,(?P<hi>[0-9]*))?\})\??|(?P<atom>\\[\s\S]|\[(?:\\[\s\S]|[^\]\\])*\]|[\s\S])"
-)   # the pieces of a pattern for _huge_empty_repeat; a malformed one only lands in `atom` a char at a time
+    r"|(?P<q>[?*+]|\{(?P<lo>[0-9]+)(?:,(?P<hi>[0-9]*))?\})\??|(?P<atom>\\[\s\S]|\[(?:\\[\s\S]|[^\]\\])*\]?|[\s\S])"
+)   # the pieces of a pattern for _huge_empty_repeat; an unclosed class takes the rest of the pattern in one step, so no run of `[` rescans
 
 
 def _huge_empty_repeat(pattern: str) -> bool:
@@ -218,6 +218,7 @@ def _huge_empty_repeat(pattern: str) -> bool:
     a group with content (`(a?){65535}`, `((ab){100}){100}`) compiles at once. One linear walk; a frame is [consumes input, current
     atom is pending, can match empty, any atom, largest weight inside]. Unsure counts as empty, which only fails open (camada-all-8fg6)."""
     stack: list[list[int]] = [[0, 0, 0, 0, 1]]
+    total = 0   # the weights of the empty repeats side by side add up: `(){999}` a thousand times is as slow as one `(){999999}`
     last: tuple[bool, int, int] | None = None   # the group just closed: (empty body, nullable, weight inside) until its quantifier
     for m in _JS_TOKEN.finditer(pattern):
         top = stack[-1]
@@ -229,6 +230,10 @@ def _huge_empty_repeat(pattern: str) -> bool:
                 weight = min(inner * bound, 1 << 20)
                 if weight >= 1000 and (inner > 1 or body_empty):
                     return True
+                if inner > 1 or body_empty:
+                    total += weight
+                    if total > 65535:
+                        return True
                 if nullable or inner > 1:
                     top[4] = max(top[4], weight)
                 if nullable or m["q"] in "?*" or (m["lo"] is not None and not m["lo"].strip("0")):
