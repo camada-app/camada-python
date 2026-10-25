@@ -590,7 +590,7 @@ def test_non_js_group_fails_open(pattern: str) -> None:
 
 
 @pytest.mark.parametrize("pattern", [
-    "(?<n>a)(?<n>b)", "(?<n>(?<n>a))", "(?:(?<n>a)|b)(?<n>c)", "(?<n>a)(?:b|(?<n>c))", "(?:(?<n>a)|(?<n>b))(c)\\2", r"(?:(?<n>a)|(?<n>b))\k<n>", r"(?<n>a)|(?<n>b)\k<n>",
+    "(?<n>a)(?<n>b)", "(?<n>(?<n>a))", "(?:(?<n>a)|b)(?<n>c)", "(?<n>a)(?:b|(?<n>c))", "(?:(?<n>a)|(?<n>b))(c)\\2", r"(?:(?<n>a)|(?<n>b))\k<n>", r"(?<n>a)|(?<n>b)\k<n>", r"(?<n>a)\k",
     "(?<n-m>a)", "(?<n+1>a)", "(?<\u00b7a>a)", "(?:(?<n>a)|(?<n>b))(?<n>c)",
 ])
 def test_bad_group_names_fail_open(pattern: str) -> None:
