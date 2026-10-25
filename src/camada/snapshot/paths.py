@@ -163,7 +163,7 @@ def prefixed(prefixes: Collection[str], path: str) -> bool:
 def path_hit(pred: PathPred, forms: PathForms, deny: bool) -> bool:
     """deny (block/challenge/warn) = any spelling; allow/skip = both canonical forms."""
     if deny:
-        # a form equal to one already tried cannot change the answer, so it is not matched again
+        # a form equal to one already tried is not matched again, so a repeat never spends the request's regex budget twice
         return (
             pred(forms[0])
             or (forms[1] != forms[0] and pred(forms[1]))
