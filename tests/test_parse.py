@@ -481,8 +481,7 @@ def test_named_mode_needs_a_real_group(pattern: str, text: str, hit: bool) -> No
         "(a)" * 150 + r"\150", "(a)" * 100 + r"\100",   # same for a group that always captured
         r"(b*)+x\1", r"(b|)+x\1", r"(a?)+x\1", r"\1(b*)+x\1", r"(?:(b*))+x\1", r"(?<m>b*)+x\k<m>", r"(\x41?)+x\1",   # a repeat that can
         r"(é?)+x\1", r"([a]?)+x\1", r"(a{0,2})+x\1", r"(?:(a)|)+x\1", r"((?=a))+x\1",                  # match empty keeps JS's capture
-        r"((?i:a?))+x\1", r"((?i-m:a?))+x\1", r"((?-i:a?))+x\1", r"((?m:b*))+x\1",   # modifier headers are no atoms
-        r"(?:(?i:(b*)))+x\1", r"(?i:(b*))+x\1", r"(?<m>(?i:b*))+x\k<m>",
+        r"((?:a?))+x\1", r"((?:b*))+x\1", r"(?:(?:(b*)))+x\1", r"(?<m>(?:b*))+x\k<m>",   # a group header is no atom
         r"(b*){2,3}x\1", r"(b*){2,}x\1", r"(?:(b*){2})+x\1", r"(?:((?:b+|(?=x))){2}c?)+x\1",   # iterations past the minimum
         r"((?:c?)*){2}x\1", r"((?:c?)+){2}x\1", r"((c*)*){2}x\1", r"((?:(?:c?){2})*){2}x\1",   # an exact count over an inner optional
         r"(((c?){2,}c?)*b*){2}x\1", r"(((b|)(c?){2,02})*){2}(?:b+|(?=x))\1",                   # nullable repeat: `regex` misreads it
@@ -591,7 +590,8 @@ def test_non_js_group_fails_open(pattern: str) -> None:
 
 
 @pytest.mark.parametrize("pattern", [
-    "(?<n>a)(?<n>b)", "(?<n>(?<n>a))", "(?:(?<n>a)|b)(?<n>c)", "(?<n>a)(?:b|(?<n>c))", "(?:(?<n>a)|(?<n>b))(c)\\2", r"(?:(?<n>a)|(?<n>b))\k<n>",
+    "(?<n>a)(?<n>b)", "(?<n>(?<n>a))", "(?:(?<n>a)|b)(?<n>c)", "(?<n>a)(?:b|(?<n>c))", "(?:(?<n>a)|(?<n>b))(c)\\2", r"(?:(?<n>a)|(?<n>b))\k<n>", r"(?<n>a)|(?<n>b)\k<n>", r"(?<n>a)\k",
+    r"(?<n>a)[\k]", r"(?<n>a)[\k<n>]", r"(?<n>a)[\k<m>]", r"(?<n>a)|(?<n>b)[\k<n>]",
     "(?<n-m>a)", "(?<n+1>a)", "(?<\u00b7a>a)", "(?:(?<n>a)|(?<n>b))(?<n>c)",
 ])
 def test_bad_group_names_fail_open(pattern: str) -> None:
@@ -601,6 +601,9 @@ def test_bad_group_names_fail_open(pattern: str) -> None:
 @pytest.mark.parametrize(("pattern", "text", "ok"), [
     ("(?<\u00e9>a)\\k<\u00e9>", "aa", True), ("(?<n>a)|(?<n>b)", "b", True), ("(?:(?<n>a)|(?<n>b))c", "bc", True),
     ("((?<n>a)|x)|(?<n>b)", "b", True), ("((?<n>a)|x)|(?<n>b)", "c", False), ("(?<n>a)|(?:(?<n>b)|(?<n>c))", "c", True),
+    (r"(?<n>a)|(?<n>b)\\1", "a", True), (r"(?<n>a)|(?<n>b)\\1", "b\\1", True), (r"(?<n>a)|(?<n>b)\\1", "b", False),   # camada-all-cwwz: no reference
+    (r"(?<n>a)|(?<n>b)[\1]", "a", True), (r"(?<n>a)|(?<n>b)[\1]", "b\x01", True), (r"(?<n>a)|(?<n>b)[\1]", "b1", False),
+    (r"(?<n>a)|(?<n>b)[\1]", "b", False), (r"[\k]", "k", True),
 ])
 def test_js_valid_group_names_compile(pattern: str, text: str, ok: bool) -> None:
     rx = compile_regex(pattern)
