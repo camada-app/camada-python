@@ -365,6 +365,8 @@ def _scan_groups(pattern: str) -> _Scan:
             if rep_above[g] or frames[g].rep or in_la[g]:
                 return named, True, {}
             marks[at] = end, True
+    if not refs:
+        return False, False, {}   # `\\1` (an escaped backslash) or `[\1]` (a class) is no reference
     return named, False, marks
 
 
@@ -387,7 +389,9 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
     matches before a trailing newline). `\<letter>` outside JS's escape set is the bare letter, as JS reads it
     without `u` (`\p{L}` is "p{L}", `\A` is "A"). `.` outside a class excludes \n \r U+2028 U+2029 as in JS; `[]`
     never matches (`(?!)`) and a `]` outside a class is text; `\s`/`\S` are JS's Unicode whitespace (inside a class
-    they become a union with the rest of it, and a `-` beside one stays a literal dash). Anything else `re` rejects still fails open."""
+    they become a union with the rest of it, and a `-` beside one stays a literal dash). Anything else `re` rejects still fails open.
+    Raises ValueError on a non-JS `(?`/`(*` group, a duplicate group name or a huge repeat of an empty group, so compile_regex
+    fails open."""
     out: list[str] = []
     i, n, in_class = 0, len(pattern), False
     start, neg, pulled, pulled_end, solo_end = 0, False, [], -1, -1   # the open class: its `[` index in out, negation, \s/\S pulled out
