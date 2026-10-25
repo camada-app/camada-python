@@ -272,6 +272,8 @@ def _scan_groups(pattern: str) -> _Scan:
         ch = pattern[i]
         if ch == "\\":
             if in_class:
+                if pattern.startswith("k", i + 1):   # `[\k]` is a SyntaxError beside named groups
+                    refs.append(("", True, i, i + 2, stack[-1]))
                 i += 2
                 continue
             if m := _JS_REF.match(pattern, i):

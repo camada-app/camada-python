@@ -591,6 +591,7 @@ def test_non_js_group_fails_open(pattern: str) -> None:
 
 @pytest.mark.parametrize("pattern", [
     "(?<n>a)(?<n>b)", "(?<n>(?<n>a))", "(?:(?<n>a)|b)(?<n>c)", "(?<n>a)(?:b|(?<n>c))", "(?:(?<n>a)|(?<n>b))(c)\\2", r"(?:(?<n>a)|(?<n>b))\k<n>", r"(?<n>a)|(?<n>b)\k<n>", r"(?<n>a)\k",
+    r"(?<n>a)[\k]", r"(?<n>a)[\k<n>]", r"(?<n>a)[\k<m>]", r"(?<n>a)|(?<n>b)[\k<n>]",
     "(?<n-m>a)", "(?<n+1>a)", "(?<\u00b7a>a)", "(?:(?<n>a)|(?<n>b))(?<n>c)",
 ])
 def test_bad_group_names_fail_open(pattern: str) -> None:
@@ -602,7 +603,7 @@ def test_bad_group_names_fail_open(pattern: str) -> None:
     ("((?<n>a)|x)|(?<n>b)", "b", True), ("((?<n>a)|x)|(?<n>b)", "c", False), ("(?<n>a)|(?:(?<n>b)|(?<n>c))", "c", True),
     (r"(?<n>a)|(?<n>b)\\1", "a", True), (r"(?<n>a)|(?<n>b)\\1", "b\\1", True), (r"(?<n>a)|(?<n>b)\\1", "b", False),   # camada-all-cwwz: no reference
     (r"(?<n>a)|(?<n>b)[\1]", "a", True), (r"(?<n>a)|(?<n>b)[\1]", "b\x01", True), (r"(?<n>a)|(?<n>b)[\1]", "b1", False),
-    (r"(?<n>a)|(?<n>b)[\1]", "b", False),
+    (r"(?<n>a)|(?<n>b)[\1]", "b", False), (r"[\k]", "k", True),
 ])
 def test_js_valid_group_names_compile(pattern: str, text: str, ok: bool) -> None:
     rx = compile_regex(pattern)
