@@ -238,7 +238,7 @@ def _min0_at(pattern: str, j: int) -> bool:
 
 
 def _scan_groups(pattern: str) -> _Scan:
-    r"""(a real `(?<name>` group exists, the pattern must fail open, {reference index: (its end index, True for a conditional
+    r"""(a `(?<name>` group and a reference exist, the pattern must fail open, {reference index: (its end index, True for a conditional
     `(?(g)\g)`, False for `(?:)`)}): one escape- and class-aware walk (a class opens at an unescaped `[`, `[` is literal inside, the first
     unescaped `]` closes it). JS reads a reference to an unset group as empty. A reference whose group is still open at
     the reference (forward or self) is always empty: False. One whose group sits under a min-0 quantifier or a negative
@@ -282,6 +282,8 @@ def _scan_groups(pattern: str) -> _Scan:
                 else:
                     i = m.end()
                 continue
+            if pattern.startswith("k", i + 1):   # a bare `\k`: a SyntaxError beside named groups (no name is empty)
+                refs.append(("", True, i, i + 2, stack[-1]))
             em = _JS_ESC.match(pattern, i)
             j = em.end() if em else n
             if em and em[0] not in ("\\b", "\\B", "\\c", "\\k") and not _min0_at(pattern, j):
@@ -331,6 +333,8 @@ def _scan_groups(pattern: str) -> _Scan:
             if not _min0_at(pattern, i + 1):
                 frames[stack[-1]].solid = True
         i += 1
+    if not refs:
+        return False, False, {}   # `\\1` (an escaped backslash) or `[\1]` (a class) is no reference
     # per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a positive lookahead at or above
     in_lb, unset, rep_above, in_la, rn = [False], [False], [False], [False], [-1]   # rn: end of nearest opt+nullable frame
     la_div = [False]   # a positive lookahead at or above holds an optional nullable repeat
@@ -365,8 +369,6 @@ def _scan_groups(pattern: str) -> _Scan:
             if rep_above[g] or frames[g].rep or in_la[g]:
                 return named, True, {}
             marks[at] = end, True
-    if not refs:
-        return False, False, {}   # `\\1` (an escaped backslash) or `[\1]` (a class) is no reference
     return named, False, marks
 
 
