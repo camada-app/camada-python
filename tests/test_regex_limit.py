@@ -47,7 +47,7 @@ def test_over_limit(row: dict[str, Any]) -> None:
 
 @pytest.mark.parametrize("row", V["refused"] + V["accepted_match"], ids=lambda r: r["id"])
 def test_native_answer(row: dict[str, Any]) -> None:
-    rule = {**V["refused_rule"], "conds": [{"f": "ua", "op": "matches", "v": row["pattern"]}]}
+    rule = {**V["refused_rule"], "conds": [{"f": V["refused_rule"]["field"], "op": "matches", "v": row["pattern"]}]}
     del rule["field"]
     for case in row["cases"]:
         assert hits(rule, ip="8.8.8.8", ua=case["ua"]) is case["hit"]["native"], case["ua"]
