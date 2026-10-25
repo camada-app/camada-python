@@ -617,7 +617,7 @@ def test_non_flag_groups_still_compile(pattern: str, text: str) -> None:
     assert rx is not None and rx.search(text)
 
 
-@pytest.mark.parametrize("pattern", ["b(){65535}c", "b(){99999999999}c", "b(()){4000}c", "b(){1000,}c", "b(?<n>){65535}c", "b((?:)){65535}c", "b((){1}){65535}c", "b(?:()){65535}c", "b(){65535}?c", "b(){0065535}c", "b((?=)){65535}c", "b((?<=)){65535}c", "b(()(?=)){65535}c", "b((){999}){999}c", "b(?:(){999}){999}c", "b(((){10}){10}){10}c", "b(){2,5000}c", "b(a?(){999}){999}c", "b((){999}a?){999}c", "b((){999}|a){999}c", "b(a(()){999}){999}c", "b((|){999}){999}c", "b(a(|){999}){999}c", "b((a|){999}){999}c", "b((a?){9999}){9999}c"])
+@pytest.mark.parametrize("pattern", ["b(){65535}c", "b(){99999999999}c", "b(()){4000}c", "b(){1000,}c", "b(?<n>){65535}c", "b((?:)){65535}c", "b((){1}){65535}c", "b(?:()){65535}c", "b(){65535}?c", "b(){0065535}c", "b((?=)){65535}c", "b((?<=)){65535}c", "b(()(?=)){65535}c", "b((){999}){999}c", "b(?:(){999}){999}c", "b(((){10}){10}){10}c", "b(){2,5000}c", "b(a?(){999}){999}c", "b((){999}a?){999}c", "b((){999}|a){999}c", "b(a(()){999}){999}c", "b((|){999}){999}c", "b(a(|){999}){999}c", "b((a|){999}){999}c", "b((a?){9999}){9999}c", "b" + "(){999}" * 100 + "c"])
 def test_compile_regex_fails_open_on_a_huge_repeat_of_an_empty_group(pattern):
     start = time.monotonic()
     assert compile_regex(pattern) is None
@@ -633,4 +633,10 @@ def test_compile_regex_scans_deeply_nested_groups_in_linear_time():
     n = 20000
     start = time.monotonic()
     compile_regex("(" * n + ")" + "){1}" * (n - 1) + "{1}")
+    assert time.monotonic() - start < 1
+
+
+def test_compile_regex_scans_unclosed_classes_in_linear_time():
+    start = time.monotonic()
+    assert compile_regex("[" * 50000) is None
     assert time.monotonic() - start < 1
