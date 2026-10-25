@@ -97,3 +97,21 @@ def test_memory_error_pattern_answers_on_error() -> None:
 
     assert paths.regex_hit(Unbounded(), "aaba", True) is True  # type: ignore[arg-type]
     assert paths.regex_hit(Unbounded(), "aaba", False) is False  # type: ignore[arg-type]
+
+
+# camada-all-zpbv: a stored `matches` value that is empty or not a string never matches (no str() coercion).
+@pytest.mark.parametrize("v", [123, 0, True, None, {"x": 1}, ["^/a"], [123], ""])
+@pytest.mark.parametrize("f", ["ua", "path", "header"])
+@pytest.mark.parametrize("over", [False, True])
+def test_empty_or_non_string_matches_never_matches(v: Any, f: str, over: bool) -> None:
+    s = "123 None 0 True null true [object Object] {'x': 1} [^/a] [123]"   # every coerced form of the values
+    big = "a" * (MAX_MATCH_INPUT + 1)
+    cond: dict[str, Any] = {"f": f, "op": "matches", "v": v, **({"name": "x-h"} if f == "header" else {})}
+    ua = f"{s} {big}" if over and f == "ua" else s
+    path = f"/a/123/None/0/True/{big}" if over and f == "path" else "/a/123/None/0/True"
+    hv = f"{s} {big}" if over and f == "header" else s
+    inp = MatchInput(ip="8.8.8.8", ua=ua, path=path, header=lambda n: hv)
+    assert not matcher({"id": "cr_b", "action": "block", "conds": [cond]}).match(inp).block
+    r = matcher({"id": "cr_s", "action": "skip", "conds": [cond]},
+                {"id": "cr_blk", "action": "block", "conds": [{"f": "ip", "op": "is_not", "v": "1.1.1.1"}]}).match(inp)
+    assert not r.allowed and r.rule == "cr_blk"

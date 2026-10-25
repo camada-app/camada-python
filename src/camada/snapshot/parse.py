@@ -658,6 +658,9 @@ def _compile_cond(c: dict[str, Any], sets: list[tuple[Bits, Bits]], deny: bool =
     condition, in condition order, so an ip condition consumes the next one. `deny` is false for a
     skip rule: its path conditions need every canonical spelling to match, a block's any one."""
     f, op = str(c.get("f", "")), str(c.get("op", ""))
+    # camada-all-zpbv: a stored matches value that is empty or not a string never matches (no str() coercion).
+    if op == "matches" and (not isinstance(c.get("v"), str) or c["v"] == ""):
+        return lambda r: False
     if f == "path":   # every path op reads the canonical forms, never _field_value
         pv = c.get("v")
         pred = path_pred(op, [str(x) for x in pv] if isinstance(pv, list) else [str(pv)], compile_path_regex, deny)
