@@ -643,3 +643,13 @@ def test_compile_regex_scans_unclosed_classes_in_linear_time():
     start = time.monotonic()
     assert compile_regex("[" * 50000) is None
     assert time.monotonic() - start < 1
+
+
+@pytest.mark.parametrize("pattern, texts", [
+    (r"(((?:b*x*?){2}(?=(?:a?)*)??x*){1,2}){0,1}((?:){2}(?:[ab]{0,1}(([ab]{0,1}x{0,1}(?:)*?)*a{2}b{0,2})*?))\1", ["xaa", "baaa", "bbaa"]),
+    (r"((\2\2(?:(?=[ab]*?a*){2}[ab]?(?:){0,2})){0,2}(b+)?){0,1}x??((?=([ab]{0,1}x{0,1})+(?=(?=[ab]{2}[ab]??a{2})?)+(?:\1|\4)+)*?\1){0,2}\3", ["aaa"]),
+])
+def test_nested_optional_nullable_repeats_match_js_or_fail_open(pattern: str, texts: list[str]) -> None:
+    # camada-all-2rwg: node matches every subject; `re` once read these differently (no capture inside a lookahead)
+    rx = compile_regex(pattern)
+    assert rx is None or all(rx.search(t) for t in texts)
