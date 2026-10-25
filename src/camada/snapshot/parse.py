@@ -185,7 +185,7 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
     Callers pass regex flags (regex.IGNORECASE), not re's."""
     try:
         scan = _scan_groups(pattern)
-        if scan[1]:
+        if scan[1] or _huge_empty_repeat(pattern):
             return None
         return regex.compile(_js_to_re(pattern, scan), regex.ASCII | regex.V0 | flags)
     except Exception:   # regex.error, RecursionError (deeply nested groups), and what regex leaks, e.g. KeyError on `(?V1)`
@@ -197,8 +197,6 @@ _RE_MAX_BOUND = 65535   # same as camada-php: above any path or header a request
 _JS_ESCAPE = re.compile(r"[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}")   # the letter escapes JS reads without `u`
 _JS_ATOM = re.compile(r"\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[^c])|[\s\S]")   # one class atom
 _JS_NON_GROUP = re.compile(r"\((?:\*|\?(?![:=!<]))")   # a `(?` or `(*` opening none of the JS forms `(?:` `(?=` `(?!` `(?<`
-_JS_GROUP_SHELL = re.compile(r"\((?:\?(?::|<?=|<[^<>=!][^<>]*>))?|\)|[?*+]|\{[0-9]+(?:,[0-9]*)?\}")   # an empty group's parts
-_JS_EMPTY_REPEAT = re.compile(r"\((?:\?(?::|<?=|<[^<>=!][^<>]*>))?\)\{")   # an empty group opening a `{n}` repeat
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?![=!])")
 _JS_BACKREF = re.compile(r"\\k<([^<>]+)>")   # a JS name holds no `<` or `>`: linear on a run of `\k<`
 _JS_REF = re.compile(r"\\(?:k<([^<>]+)>|([1-9][0-9]*))")   # a named or numbered backreference: group 1 or 2
@@ -208,13 +206,65 @@ _JS_DOT = r"[^\n\r\u2028\u2029]"
 _JS_SPACE = {"s": f"[{_JS_WS}]", "S": f"[^{_JS_WS}]"}
 
 
-def _empty_repeat_product(span: str) -> int:
-    """The product of the largest bound of every `{n}` `{n,}` `{n,m}` in a group span (nested counts multiply)."""
-    prod = 1
-    for m in _JS_BRACE.finditer(span):
-        lo, hi = (min(int(x), _RE_MAX_BOUND) if x and len(x) < 6 else _RE_MAX_BOUND if x else 0 for x in (m[1], m[3]))
-        prod = min(prod * max(lo, hi, 1), _RE_MAX_BOUND * 2)
-    return prod
+_JS_TOKEN = re.compile(
+    r"(?P<open>\((?:\?(?:(?P<look><?[=!])|:|<[^<>=!][^<>]*>))?)|(?P<close>\))|(?P<bar>\|)"
+    r"|(?P<q>[?*+]|\{(?P<lo>[0-9]+)(?:,(?P<hi>[0-9]*))?\})\??|(?P<atom>\\[\s\S]|\[(?:\\[\s\S]|[^\]\\])*\]|[\s\S])"
+)   # the pieces of a pattern for _huge_empty_repeat; a malformed one only lands in `atom` a char at a time
+
+
+def _huge_empty_repeat(pattern: str) -> bool:
+    """Does a repeat of a group that can match empty, or of one holding such a repeat, reach 1000 iterations in all? `regex` takes seconds
+    to minutes to compile `b(){65535}c` or `b((){999}){999}c` (C, so SIGALRM cannot stop it). Nested counts multiply; a lone repeat of
+    a group with content (`(a?){65535}`, `((ab){100}){100}`) compiles at once. One linear walk; a frame is [consumes input, current
+    atom is pending, can match empty, any atom, largest weight inside]. Unsure counts as empty, which only fails open (camada-all-8fg6)."""
+    stack: list[list[int]] = [[0, 0, 0, 0, 1]]
+    last: tuple[bool, int, int] | None = None   # the group just closed: (empty body, nullable, weight inside) until its quantifier
+    for m in _JS_TOKEN.finditer(pattern):
+        top = stack[-1]
+        if m["q"] is not None:
+            if last is not None:
+                body_empty, nullable, inner = last
+                lo, hi = (min(int(x), 65535) if x and len(x) < 6 else 65535 if x else 0 for x in (m["lo"], m["hi"]))
+                bound = max(lo, hi, 1) if m["lo"] else 1
+                weight = min(inner * bound, 1 << 20)
+                if weight >= 1000 and (inner > 1 or body_empty):
+                    return True
+                if nullable or inner > 1:
+                    top[4] = max(top[4], weight)
+                if nullable or m["q"] in "?*" or (m["lo"] is not None and not m["lo"].strip("0")):
+                    top[1] = 0
+                last = None
+            elif m["q"] in "?*" or (m["lo"] is not None and not m["lo"].strip("0")):
+                top[1] = 0   # a min-0 quantifier: the atom before it need not consume
+            continue
+        if last is not None:   # no quantifier followed the closed group
+            if last[1] or last[2] > 1:
+                top[4] = max(top[4], last[2])
+            last = None
+        if m["open"] is not None:
+            top[0] |= top[1]
+            top[1] = 0
+            stack.append([0, 0, 1 if m["look"] else 0, 0, 1])
+        elif m["close"] is not None and len(stack) > 1:
+            top[0] |= top[1]
+            frame = stack.pop()
+            parent = stack[-1]
+            nullable = frame[2] or not frame[0]
+            parent[0] |= parent[1]
+            parent[1] = 0 if nullable else 1
+            parent[3] |= frame[3] if not frame[2] else 0
+            last = (not frame[3], bool(nullable), frame[4])
+        elif m["bar"] is not None:
+            top[0] |= top[1]
+            top[1] = 0
+            if not top[0]:
+                top[2] = 1
+            top[0] = 0
+        elif m["atom"] is not None:
+            top[0] |= top[1]
+            top[1] = 1
+            top[3] = 1
+    return False
 
 
 _HEADER = re.compile(r"\(\?(?:<[=!]|<[^<>]*>|[A-Za-z-]*:|[=!])")   # a group opener, bounded: lookbehind, name, flags, lookahead
@@ -405,7 +455,6 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
     rng = 0   # in a class: 0 no atom to start a range, 1 an atom that can, 2 a range dash awaiting its end
     named, _, marks = scan or _scan_groups(pattern)
     opens: list[int] = []   # the unclosed `(` indices outside a class
-    last_group = (-1, -1)   # the (open, close) indices of the group that closed last
     bars = [-1]   # per open group, the root first: the index of the last `|` in it or an ancestor
     last_named: dict[str, int] = {}   # each capture name -> the index of its last opener
     while i < n:
@@ -515,7 +564,7 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
             opens.append(i)
             bars.append(bars[-1])
         elif ch == ")" and opens:
-            last_group = (opens.pop(), i)
+            opens.pop()
             bars.pop()
         elif ch == "|":
             bars[-1] = i
@@ -526,11 +575,6 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
         elif ch == "{" and (brace := _JS_BRACE.match(pattern, i)):
             lo, comma, hi = brace.groups()
             lo_n, hi_n = _num(lo), (_num(hi) if hi else None)
-            if last_group[1] == i - 1 and (body := pattern[last_group[0] : i]) and (
-                not _JS_GROUP_SHELL.sub("", body) or _JS_EMPTY_REPEAT.search(body)
-            ):   # an all-empty group, or one holding a repeated empty group beside other atoms
-                if _empty_repeat_product(body + brace[0]) >= 1000:
-                    raise ValueError("huge repeat of an empty group")   # `b((){999}){999}c` takes seconds (camada-all-8fg6)
             if hi_n is not None and lo_n > hi_n:
                 out.append(brace[0])   # m > n is a JS SyntaxError: leave it so re rejects it too
             else:
