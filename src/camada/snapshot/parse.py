@@ -792,7 +792,7 @@ def parse_snapshot(binary: bytes | bytearray | memoryview, meta: dict[str, Any])
         tls=frozenset(meta.get("tls") or []),
         paths_exact=frozenset(canon_path(p) for p in meta.get("pathsExact") or []),
         paths_prefix=frozenset(dir_key(p) for p in meta.get("pathsPrefix") or []),
-        paths_regex=[path_pred("matches", [str(p)], compile_path_regex, True) for p in meta.get("pathsRegex") or []],
+        paths_regex=[path_pred("matches", [p], compile_path_regex, True) for p in meta.get("pathsRegex") or [] if isinstance(p, str)],
         allow=_range_set(sec.get(10, _EMPTY), sec.get(11, _EMPTY), meta.get("allow")),
         challenge=_range_set(sec.get(12, _EMPTY), sec.get(13, _EMPTY), meta.get("challenge")),
         rules=_compile_rules(meta, rule4, rule6),

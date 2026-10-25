@@ -23,6 +23,9 @@ def test_meta_paths_regex_refused_pattern_never_matches() -> None:
     m = meta_matcher(["(?>a)", "(?<=a"])
     assert m.match(MatchInput(path="/a")).block is False
     assert m.match(MatchInput(path="/aa")).block is False
+    m = meta_matcher([None, 5])   # type: ignore[list-item]  # non-strings never match
+    assert m.match(MatchInput(path="/none")).block is False
+    assert m.match(MatchInput(path="/5")).block is False
 
 
 def test_meta_paths_regex_over_cap_path_blocks() -> None:
