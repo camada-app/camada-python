@@ -695,25 +695,29 @@ def test_astral_quantifier_controls() -> None:
     assert compile_regex("x\U0001F600{y").search("x\U0001F600{y")   # not a quantifier: literal brace
 
 
-# V8 reads a zero count as the high unit alone (the position stops mid-char); the unit repeated is only the low one (camada-all-5lra)
 V8_ASTRAL = [
-    ("x\U0001F600{0}", "x\U0001F600", True),
-    ("x\U0001F600{0}.y", "x\U0001F600y", True),
     ("x\U0001F600{0}y", "x\U0001F600y", False),
     ("x\U0001F600{0}y", "xy", False),
-    ("x\U0001F600?", "x\U0001F601", True),
-    ("x\U0001F600?.", "x\U0001F601", True),
     ("x\U0001F600?y", "xy", False),
-    ("x\U0001F600{0,1}..", "x\U0001F601a", True),
     ("x\\\U0001F600?y", "xy", False),
     ("x\\\U0001F600?y", "x\U0001F600y", True),
-    ("x\\\U0001F600{0}", "x\U0001F600", True),
     ("x\\\U0001F600y", "x\U0001F600y", True),   # unquantified: reads as the char
+    # V8's zero-low-unit reading (the high unit alone) is not emulated: these hit in V8, miss here (camada-all-5lra, k938)
+    ("x\U0001F600{0}", "x\U0001F600", False),
+    ("x\U0001F600{0}.y", "x\U0001F600y", False),
+    ("x\U0001F600?", "x\U0001F601", False),
+    ("x\U0001F600?.", "x\U0001F601", False),
+    ("x\U0001F600{0,1}..", "x\U0001F601a", False),
+    ("x\\\U0001F600{0}", "x\U0001F600", False),
+    # V8 misses these; the dropped lookahead made them hit
+    ("x\U0001F600?\U0001F601", "x\U0001F601", False),
+    ("x\U0001F600?\\b", "x\U0001F600", False),
+    ("x\U0001F600?(?<=x)", "x\U0001F600", False),
 ]
 
 
 @pytest.mark.parametrize(("pattern", "text", "hit"), V8_ASTRAL)
-def test_astral_zero_count_answers_as_v8(pattern: str, text: str, hit: bool) -> None:
+def test_astral_zero_count_reads_low_unit_only(pattern: str, text: str, hit: bool) -> None:
     rx = compile_regex(pattern)
     assert rx is not None
     assert bool(rx.search(text)) is hit
