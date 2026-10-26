@@ -693,3 +693,27 @@ def test_astral_quantifier_answers_as_v8(q: str) -> None:
 def test_astral_quantifier_controls() -> None:
     assert compile_regex("x(?:\U0001F600)?y").search("xy")   # a group still repeats whole
     assert compile_regex("x\U0001F600{y").search("x\U0001F600{y")   # not a quantifier: literal brace
+
+
+# V8 reads a zero count as the high unit alone (the position stops mid-char); the unit repeated is only the low one (camada-all-5lra)
+V8_ASTRAL = [
+    ("x\U0001F600{0}", "x\U0001F600", True),
+    ("x\U0001F600{0}.y", "x\U0001F600y", True),
+    ("x\U0001F600{0}y", "x\U0001F600y", False),
+    ("x\U0001F600{0}y", "xy", False),
+    ("x\U0001F600?", "x\U0001F601", True),
+    ("x\U0001F600?.", "x\U0001F601", True),
+    ("x\U0001F600?y", "xy", False),
+    ("x\U0001F600{0,1}..", "x\U0001F601a", True),
+    ("x\\\U0001F600?y", "xy", False),
+    ("x\\\U0001F600?y", "x\U0001F600y", True),
+    ("x\\\U0001F600{0}", "x\U0001F600", True),
+    ("x\\\U0001F600y", "x\U0001F600y", True),   # unquantified: reads as the char
+]
+
+
+@pytest.mark.parametrize(("pattern", "text", "hit"), V8_ASTRAL)
+def test_astral_zero_count_answers_as_v8(pattern: str, text: str, hit: bool) -> None:
+    rx = compile_regex(pattern)
+    assert rx is not None
+    assert bool(rx.search(text)) is hit
