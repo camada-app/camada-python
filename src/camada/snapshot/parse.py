@@ -173,8 +173,8 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
     `regex` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them.
     An astral char is one code point here and two UTF-16 units in JS, so `.`, `[^a]` and `\S` count it
     once (an accepted gap, camada-all-vuvo). A quantifier right after a raw astral char repeats the whole char here but only its
-    low unit in JS, so _js_to_re answers as V8 does: the char when the count allows 1, plus a lookahead for its high-surrogate block
-    when it allows 0, else `(?!)` (camada-all-5lra, see _astral_quantified).
+    low unit in JS, so _js_to_re answers as V8 does: the char when the count allows 1, else `(?!)`; V8's zero-low-unit reading is not
+    emulated (camada-all-5lra, see _astral_quantified).
     A backreference to a group that may not have captured on that pass
     reads empty in JS and fails in `re`: _scan_groups marks it for a translation that reads empty too, or (a repeating
     ancestor, where JS resets the capture per iteration) fails open.
@@ -487,10 +487,11 @@ def _bounds(lo: str, hi: str | None) -> tuple[tuple[int, str], tuple[int, str] |
 
 
 def _astral_quantified(ch: str, pattern: str, j: int) -> tuple[str, int] | None:
-    """V8 without `u` reads an astral char as its high unit H then its low unit L, and a quantifier at `j` repeats only L.
-    On well-formed text H is always followed by that char's own L, so it is H plus 0 or 1 L: 1 L eats the whole char (when the
-    count allows 1), 0 L (a zero count) stops mid-char, which a code-point engine reads as a lookahead for any char sharing H.
-    Returns the rewrite and where the quantifier ends, or None when none follows or m > n (a SyntaxError, left as written) (5lra)."""
+    """V8 without `u` reads an astral char as its high unit then its low unit, and a quantifier at `j` repeats only the low one.
+    So the char stays when the count allows 1, else `(?!)`. V8's zero-low-unit reading (the high unit alone: `x😀{0}` on "x😀",
+    a trailing `x😀?` on "x😁") is not emulated: that branch never matches, as the whole pattern never matches in the linear
+    engines (camada-all-k938). Returns the rewrite and where the quantifier ends, or None when none follows or m > n (a
+    SyntaxError, left as written) (5lra)."""
     if not (q := _JS_QUANT.match(pattern, j)):
         return None
     sym, lo, comma, hi = q.groups()
@@ -501,14 +502,7 @@ def _astral_quantified(ch: str, pattern: str, j: int) -> tuple[str, int] | None:
     if not (bounds := _bounds(lo, hi)):
         return None
     lo_n, hi_n = bounds
-    once = lo_n <= (1, "1") and (hi_n is None or hi_n >= (1, "1"))
-    alts = [ch] if once else []
-    if lo_n[1] == "0":
-        base = ord(ch) & ~0x3FF
-        alts.append(f"(?=[{chr(base)}-{chr(base + 0x3FF)}])")
-    if not alts:
-        return "(?!)", q.end()
-    return (alts[0] if len(alts) == 1 else f"(?:{'|'.join(alts)})"), q.end()
+    return (ch if lo_n <= (1, "1") and (hi_n is None or hi_n >= (1, "1")) else "(?!)"), q.end()
 
 
 def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
