@@ -423,6 +423,12 @@ def test_named_backreference() -> None:
     assert rx is not None and rx.fullmatch("aa") is not None and rx.fullmatch("ab") is None
 
 
+@pytest.mark.parametrize(("pattern", "hit", "miss"), [(r"^[\8]$", "8", "\\"), (r"^[\9]$", "9", "\\"), (r"^[\8-\9]+$", "89", "7")])
+def test_class_escape_of_8_or_9_is_the_digit(pattern: str, hit: str, miss: str) -> None:
+    rx = compile_regex(pattern)   # JS (V8) reads `[\8]` as "8"; `regex` calls the escape bad (camada-all-nlnh)
+    assert rx is not None and rx.search(hit) is not None and rx.search(miss) is None
+
+
 def test_literal_bracket_in_class_compiles_without_warning() -> None:
     rx = compile_regex("[[:alpha:]]")   # JS: the class {[ : a l p h} then a literal `]`
     assert rx is not None and rx.search("b") is None
