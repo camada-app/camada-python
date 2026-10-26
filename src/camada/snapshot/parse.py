@@ -476,8 +476,13 @@ def _num(d: str) -> tuple[int, str]:
 
 
 _MAX_NUM = _num(str(_RE_MAX_BOUND))
-_JS_QUANT = re.compile(r"(?:([?*+])|\{([0-9]+)(?:(,)([0-9]*))?\})\??")   # a JS quantifier with its lazy `?`
-_ONE = _num("1")
+_JS_QUANT = re.compile(rf"(?:([?*+])|{_JS_BRACE.pattern})\??")   # a JS quantifier with its lazy `?`
+
+
+def _bounds(lo: str, hi: str | None) -> tuple[tuple[int, str], tuple[int, str] | None] | None:
+    """Normalized (lo, hi) of a repeat; hi None is unbounded. None when m > n, a JS SyntaxError the caller leaves as written."""
+    lo_n, hi_n = _num(lo), (_num(hi) if hi else None)
+    return None if hi_n is not None and lo_n > hi_n else (lo_n, hi_n)
 
 
 def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
@@ -617,10 +622,10 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
             continue
         elif ch == "{" and (brace := _JS_BRACE.match(pattern, i)):
             lo, comma, hi = brace.groups()
-            lo_n, hi_n = _num(lo), (_num(hi) if hi else None)
-            if hi_n is not None and lo_n > hi_n:
+            if not (bounds := _bounds(lo, hi)):
                 out.append(brace[0])   # m > n is a JS SyntaxError: leave it so re rejects it too
             else:
+                lo_n, hi_n = bounds
                 lo = str(_RE_MAX_BOUND) if lo_n > _MAX_NUM else lo_n[1]   # stripped: re's int() refuses >4300 digits
                 hi = "" if hi_n is None or hi_n > _MAX_NUM else hi_n[1]   # an upper bound past it never binds a real input, so drop it
                 out.append(f"{{{lo}{comma or ''}{hi}}}")
@@ -636,9 +641,9 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
                 lo, hi = {"?": ("0", "1"), "*": ("0", None), "+": ("1", None)}[sym]
             elif not comma:
                 hi = lo
-            lo_n, hi_n = _num(lo), (_num(hi) if hi else None)   # None: no upper bound
-            if hi_n is None or lo_n <= hi_n:   # m > n is a SyntaxError: leave it as written
-                out.append(ch if lo_n <= _ONE and (hi_n is None or hi_n >= _ONE) else "(?!)")
+            if bounds := _bounds(lo, hi):   # m > n is a SyntaxError: leave it as written
+                lo_n, hi_n = bounds
+                out.append(ch if lo_n <= (1, "1") and (hi_n is None or hi_n >= (1, "1")) else "(?!)")
                 i = q.end()
                 continue
         out.append(ch)

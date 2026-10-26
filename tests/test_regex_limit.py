@@ -46,20 +46,15 @@ def test_over_limit(row: dict[str, Any]) -> None:
     assert hits(row["rule"], **row["input"]) is row["hit"]["budget"], row["why"]
 
 
-@pytest.mark.parametrize("row", V["refused"] + V["accepted_match"], ids=lambda r: r["id"])
-def test_native_answer(row: dict[str, Any]) -> None:
+_ENGINE_ROWS = [(r, "native") for r in V["refused"] + V["accepted_match"]] + [(r, "python") for r in V["astral_split"]]
+
+
+@pytest.mark.parametrize(("row", "engine"), _ENGINE_ROWS, ids=lambda r: r["id"] if isinstance(r, dict) else r)
+def test_engine_answer(row: dict[str, Any], engine: str) -> None:
     rule = {**V["refused_rule"], "conds": [{"f": V["refused_rule"]["field"], "op": "matches", "v": row["pattern"]}]}
     del rule["field"]
     for case in row["cases"]:
-        assert hits(rule, ip="8.8.8.8", ua=case["ua"]) is case["hit"]["native"], case["ua"]
-
-
-@pytest.mark.parametrize("row", V["astral_split"], ids=lambda r: r["id"])
-def test_astral_split(row: dict[str, Any]) -> None:
-    rule = {**V["refused_rule"], "conds": [{"f": V["refused_rule"]["field"], "op": "matches", "v": row["pattern"]}]}
-    del rule["field"]
-    for case in row["cases"]:
-        assert hits(rule, ip="8.8.8.8", ua=case["ua"]) is case["hit"]["python"], case["ua"]
+        assert hits(rule, ip="8.8.8.8", ua=case["ua"]) is case["hit"][engine], case["ua"]
 
 
 def test_request_budget_is_spent_across_rules() -> None:
