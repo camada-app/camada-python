@@ -14,7 +14,7 @@ from camada.snapshot.paths import MATCH_BUDGET_MS, MAX_MATCH_INPUT, REQUEST_REGE
 from .conftest import fixture_path, read_json
 from .test_parse import rules_snapshot
 
-REGEX_LIMIT_VECTORS_SHA256 = "d549b323af4ba9b863a401a474da77baee46711832d1ef4241986bafc0bffc15"
+REGEX_LIMIT_VECTORS_SHA256 = "b8628729ffe24963f3bf868842f77f644f57edeb7ec0f179208160e3060fffbb"
 REL = "regex-limit/regex-limit-vectors.json"
 V = read_json(REL)
 
