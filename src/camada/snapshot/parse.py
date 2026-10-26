@@ -529,6 +529,8 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
             kept = (not (nxt.isascii() and nxt.isalpha()) or _JS_ESCAPE.match(pattern, i + 1) is not None
                     or (nxt == "B" and not in_class) or (nxt == "k" and named))
             rng = 0 if rng == 2 else 1
+            if in_class and nxt in "89":
+                kept = False   # JS reads `[\8]` as the digit; `regex` calls the escape bad
             out.append(pattern[i : i + 2] if kept else "\\\\c" if nxt == "c" else nxt)   # JS reads `\c` before a non-letter as text
             i += 2
             continue
