@@ -14,7 +14,7 @@ from camada.snapshot.paths import MATCH_BUDGET_MS, MAX_MATCH_INPUT, REQUEST_REGE
 from .conftest import fixture_path, read_json
 from .test_parse import rules_snapshot
 
-REGEX_LIMIT_VECTORS_SHA256 = "b01e86bd2bead280081f58d31f7f517131d8cafa6144b8c27fe868e3c3959d56"
+REGEX_LIMIT_VECTORS_SHA256 = "d549b323af4ba9b863a401a474da77baee46711832d1ef4241986bafc0bffc15"
 REL = "regex-limit/regex-limit-vectors.json"
 V = read_json(REL)
 
@@ -36,6 +36,7 @@ def hits(rule: dict[str, Any], **inp: Any) -> bool:
 def test_vectors_pin_and_constants() -> None:
     assert hashlib.sha256(fixture_path(REL).read_bytes()).hexdigest() == REGEX_LIMIT_VECTORS_SHA256
     assert V["accepted_match"]
+    assert V["astral_split"]
     c = V["constants"]
     assert (MATCH_BUDGET_MS, REQUEST_REGEX_BUDGET_MS, MAX_MATCH_INPUT) == (c["MATCH_BUDGET_MS"], c["REQUEST_REGEX_BUDGET_MS"], c["MAX_MATCH_INPUT"])
 
@@ -45,12 +46,15 @@ def test_over_limit(row: dict[str, Any]) -> None:
     assert hits(row["rule"], **row["input"]) is row["hit"]["budget"], row["why"]
 
 
-@pytest.mark.parametrize("row", V["refused"] + V["accepted_match"], ids=lambda r: r["id"])
-def test_native_answer(row: dict[str, Any]) -> None:
+_ENGINE_ROWS = [(r, "native") for r in V["refused"] + V["accepted_match"]] + [(r, "python") for r in V["astral_split"]]
+
+
+@pytest.mark.parametrize(("row", "engine"), _ENGINE_ROWS, ids=lambda r: r["id"] if isinstance(r, dict) else r)
+def test_engine_answer(row: dict[str, Any], engine: str) -> None:
     rule = {**V["refused_rule"], "conds": [{"f": V["refused_rule"]["field"], "op": "matches", "v": row["pattern"]}]}
     del rule["field"]
     for case in row["cases"]:
-        assert hits(rule, ip="8.8.8.8", ua=case["ua"]) is case["hit"]["native"], case["ua"]
+        assert hits(rule, ip="8.8.8.8", ua=case["ua"]) is case["hit"][engine], case["ua"]
 
 
 def test_request_budget_is_spent_across_rules() -> None:

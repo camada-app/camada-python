@@ -172,7 +172,10 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
     authored as JS regexes (the analyst validates them with `new RegExp`), so the JS spellings
     `regex` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them.
     An astral char is one code point here and two UTF-16 units in JS, so `.`, `[^a]` and `\S` count it
-    once (an accepted gap, camada-all-vuvo). A backreference to a group that may not have captured on that pass
+    once (an accepted gap, camada-all-vuvo). A quantifier right after a raw astral char repeats the whole char here but only its
+    low unit in JS, so _js_to_re answers as V8 does: the char when the count allows 1, else `(?!)`; V8's zero-low-unit reading is not
+    emulated (camada-all-5lra, see _astral_quantified).
+    A backreference to a group that may not have captured on that pass
     reads empty in JS and fails in `re`: _scan_groups marks it for a translation that reads empty too, or (a repeating
     ancestor, where JS resets the capture per iteration) fails open.
     A `(?` or `(*` group JS lacks (`(?i)`, `(?>`, `(?#`, `(*FAIL)`, ...) fails open: JS rejects it or V8 mis-evaluates it (camada-all-lsl8).
@@ -474,6 +477,32 @@ def _num(d: str) -> tuple[int, str]:
 
 
 _MAX_NUM = _num(str(_RE_MAX_BOUND))
+_JS_QUANT = re.compile(rf"(?:([?*+])|{_JS_BRACE.pattern})\??")   # a JS quantifier with its lazy `?`
+
+
+def _bounds(lo: str, hi: str | None) -> tuple[tuple[int, str], tuple[int, str] | None] | None:
+    """Normalized (lo, hi) of a repeat; hi None is unbounded. None when m > n, a JS SyntaxError the caller leaves as written."""
+    lo_n, hi_n = _num(lo), (_num(hi) if hi else None)
+    return None if hi_n is not None and lo_n > hi_n else (lo_n, hi_n)
+
+
+def _astral_quantified(ch: str, pattern: str, j: int) -> tuple[str, int] | None:
+    """V8 without `u` reads an astral char as its high unit then its low unit, and a quantifier at `j` repeats only the low one.
+    So the char stays when the count allows 1, else `(?!)`. V8's zero-low-unit reading (the high unit alone: `x😀{0}` on "x😀",
+    a trailing `x😀?` on "x😁") is not emulated: that branch never matches, as the whole pattern never matches in the linear
+    engines (camada-all-k938). Returns the rewrite and where the quantifier ends, or None when none follows or m > n (a
+    SyntaxError, left as written) (5lra)."""
+    if not (q := _JS_QUANT.match(pattern, j)):
+        return None
+    sym, lo, comma, hi = q.groups()
+    if sym:
+        lo, hi = {"?": ("0", "1"), "*": ("0", None), "+": ("1", None)}[sym]
+    elif not comma:
+        hi = lo
+    if not (bounds := _bounds(lo, hi)):
+        return None
+    lo_n, hi_n = bounds
+    return (ch if lo_n <= (1, "1") and (hi_n is None or hi_n >= (1, "1")) else "(?!)"), q.end()
 
 
 def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
@@ -525,6 +554,9 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
             if nxt == "k" and named and not in_class and (m := _JS_BACKREF.match(pattern, i)):   # `\k<name>` -> `(?P=name)`
                 out.append(f"(?P={m[1]})")
                 i = m.end()
+                continue
+            if not in_class and ord(nxt) > 0xFFFF and _JS_QUANT.match(pattern, i + 2):   # `\😀?` reads as `😀?` (5lra)
+                i += 1
                 continue
             kept = (not (nxt.isascii() and nxt.isalpha()) or _JS_ESCAPE.match(pattern, i + 1) is not None
                     or (nxt == "B" and not in_class) or (nxt == "k" and named))
@@ -613,10 +645,10 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
             continue
         elif ch == "{" and (brace := _JS_BRACE.match(pattern, i)):
             lo, comma, hi = brace.groups()
-            lo_n, hi_n = _num(lo), (_num(hi) if hi else None)
-            if hi_n is not None and lo_n > hi_n:
+            if not (bounds := _bounds(lo, hi)):
                 out.append(brace[0])   # m > n is a JS SyntaxError: leave it so re rejects it too
             else:
+                lo_n, hi_n = bounds
                 lo = str(_RE_MAX_BOUND) if lo_n > _MAX_NUM else lo_n[1]   # stripped: re's int() refuses >4300 digits
                 hi = "" if hi_n is None or hi_n > _MAX_NUM else hi_n[1]   # an upper bound past it never binds a real input, so drop it
                 out.append(f"{{{lo}{comma or ''}{hi}}}")
@@ -625,6 +657,10 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
         elif ch == "{":
             out.append("\\{")
             i += 1
+            continue
+        if ord(ch) > 0xFFFF and (astral := _astral_quantified(ch, pattern, i + 1)):
+            rewrite, i = astral
+            out.append(rewrite)
             continue
         out.append(ch)
         i += 1
