@@ -677,3 +677,19 @@ def test_lazy_or_sibling_nullable_repeat_before_reference_matches_js_or_fails_op
     # camada-all-6ikm, camada-all-d8x4: node matches every subject; `regex` read another capture
     rx = compile_regex(pattern)
     assert rx is None or all(rx.search(t) for t in texts)
+
+
+# V8 repeats only the low unit of an astral char: x😀y hits when the count allows 1; xy and x😀😀y never (camada-all-5lra)
+ASTRAL_ONCE = ["?", "*", "+", "??", "*?", "+?", "{1}", "{01}", "{0,1}", "{0,2}", "{1,}", "{1}?"]
+
+
+@pytest.mark.parametrize("q", [*ASTRAL_ONCE, "{0}", "{2}", "{2,}", "{2,3}"])
+def test_astral_quantifier_answers_as_v8(q: str) -> None:
+    rx = compile_regex(f"x\U0001F600{q}y")
+    assert rx is not None
+    assert [bool(rx.search(u)) for u in ("xy", "x\U0001F600y", "x\U0001F600\U0001F600y")] == [False, q in ASTRAL_ONCE, False]
+
+
+def test_astral_quantifier_controls() -> None:
+    assert compile_regex("x(?:\U0001F600)?y").search("xy")   # a group still repeats whole
+    assert compile_regex("x\U0001F600{y").search("x\U0001F600{y")   # not a quantifier: literal brace

@@ -172,7 +172,9 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
     authored as JS regexes (the analyst validates them with `new RegExp`), so the JS spellings
     `regex` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them.
     An astral char is one code point here and two UTF-16 units in JS, so `.`, `[^a]` and `\S` count it
-    once (an accepted gap, camada-all-vuvo). A backreference to a group that may not have captured on that pass
+    once (an accepted gap, camada-all-vuvo). A quantifier right after a raw astral char repeats the whole char here but only its
+    low unit in JS, so _js_to_re answers as V8 does: the char alone when the count allows 1, else `(?!)` (camada-all-5lra).
+    A backreference to a group that may not have captured on that pass
     reads empty in JS and fails in `re`: _scan_groups marks it for a translation that reads empty too, or (a repeating
     ancestor, where JS resets the capture per iteration) fails open.
     A `(?` or `(*` group JS lacks (`(?i)`, `(?>`, `(?#`, `(*FAIL)`, ...) fails open: JS rejects it or V8 mis-evaluates it (camada-all-lsl8).
@@ -474,6 +476,8 @@ def _num(d: str) -> tuple[int, str]:
 
 
 _MAX_NUM = _num(str(_RE_MAX_BOUND))
+_JS_QUANT = re.compile(r"(?:([?*+])|\{([0-9]+)(?:(,)([0-9]*))?\})\??")   # a JS quantifier with its lazy `?`
+_ONE = _num("1")
 
 
 def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
@@ -626,6 +630,17 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
             out.append("\\{")
             i += 1
             continue
+        if ord(ch) > 0xFFFF and (q := _JS_QUANT.match(pattern, i + 1)):   # V8: the char once or never (5lra)
+            sym, lo, comma, hi = q.groups()
+            if sym:
+                lo, hi = {"?": ("0", "1"), "*": ("0", None), "+": ("1", None)}[sym]
+            elif not comma:
+                hi = lo
+            lo_n, hi_n = _num(lo), (_num(hi) if hi else None)   # None: no upper bound
+            if hi_n is None or lo_n <= hi_n:   # m > n is a SyntaxError: leave it as written
+                out.append(ch if lo_n <= _ONE and (hi_n is None or hi_n >= _ONE) else "(?!)")
+                i = q.end()
+                continue
         out.append(ch)
         i += 1
     return "".join(out)
