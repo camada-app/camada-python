@@ -14,7 +14,7 @@ from camada.snapshot.paths import MATCH_BUDGET_MS, MAX_MATCH_INPUT, REQUEST_REGE
 from .conftest import fixture_path, read_json
 from .test_parse import rules_snapshot
 
-REGEX_LIMIT_VECTORS_SHA256 = "b01e86bd2bead280081f58d31f7f517131d8cafa6144b8c27fe868e3c3959d56"
+REGEX_LIMIT_VECTORS_SHA256 = "d549b323af4ba9b863a401a474da77baee46711832d1ef4241986bafc0bffc15"
 REL = "regex-limit/regex-limit-vectors.json"
 V = read_json(REL)
 
@@ -36,6 +36,7 @@ def hits(rule: dict[str, Any], **inp: Any) -> bool:
 def test_vectors_pin_and_constants() -> None:
     assert hashlib.sha256(fixture_path(REL).read_bytes()).hexdigest() == REGEX_LIMIT_VECTORS_SHA256
     assert V["accepted_match"]
+    assert V["astral_split"]
     c = V["constants"]
     assert (MATCH_BUDGET_MS, REQUEST_REGEX_BUDGET_MS, MAX_MATCH_INPUT) == (c["MATCH_BUDGET_MS"], c["REQUEST_REGEX_BUDGET_MS"], c["MAX_MATCH_INPUT"])
 
@@ -51,6 +52,14 @@ def test_native_answer(row: dict[str, Any]) -> None:
     del rule["field"]
     for case in row["cases"]:
         assert hits(rule, ip="8.8.8.8", ua=case["ua"]) is case["hit"]["native"], case["ua"]
+
+
+@pytest.mark.parametrize("row", V["astral_split"], ids=lambda r: r["id"])
+def test_astral_split(row: dict[str, Any]) -> None:
+    rule = {**V["refused_rule"], "conds": [{"f": V["refused_rule"]["field"], "op": "matches", "v": row["pattern"]}]}
+    del rule["field"]
+    for case in row["cases"]:
+        assert hits(rule, ip="8.8.8.8", ua=case["ua"]) is case["hit"]["python"], case["ua"]
 
 
 def test_request_budget_is_spent_across_rules() -> None:
