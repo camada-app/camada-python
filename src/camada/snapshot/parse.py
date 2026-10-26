@@ -173,7 +173,8 @@ def compile_regex(pattern: str, flags: int = 0) -> regex.Pattern[str] | None:
     `regex` refuses are translated first — see _js_to_re — and ASCII mode keeps \d \w \b as JS reads them.
     An astral char is one code point here and two UTF-16 units in JS, so `.`, `[^a]` and `\S` count it
     once (an accepted gap, camada-all-vuvo). A quantifier right after a raw astral char repeats the whole char here but only its
-    low unit in JS, so _js_to_re answers as V8 does: the char alone when the count allows 1, else `(?!)` (camada-all-5lra).
+    low unit in JS, so _js_to_re answers as V8 does: the char when the count allows 1, plus a lookahead for its high-surrogate block
+    when it allows 0, else `(?!)` (camada-all-5lra, see _astral_quantified).
     A backreference to a group that may not have captured on that pass
     reads empty in JS and fails in `re`: _scan_groups marks it for a translation that reads empty too, or (a repeating
     ancestor, where JS resets the capture per iteration) fails open.
@@ -485,6 +486,31 @@ def _bounds(lo: str, hi: str | None) -> tuple[tuple[int, str], tuple[int, str] |
     return None if hi_n is not None and lo_n > hi_n else (lo_n, hi_n)
 
 
+def _astral_quantified(ch: str, pattern: str, j: int) -> tuple[str, int] | None:
+    """V8 without `u` reads an astral char as its high unit H then its low unit L, and a quantifier at `j` repeats only L.
+    On well-formed text H is always followed by that char's own L, so it is H plus 0 or 1 L: 1 L eats the whole char (when the
+    count allows 1), 0 L (a zero count) stops mid-char, which a code-point engine reads as a lookahead for any char sharing H.
+    Returns the rewrite and where the quantifier ends, or None when none follows or m > n (a SyntaxError, left as written) (5lra)."""
+    if not (q := _JS_QUANT.match(pattern, j)):
+        return None
+    sym, lo, comma, hi = q.groups()
+    if sym:
+        lo, hi = {"?": ("0", "1"), "*": ("0", None), "+": ("1", None)}[sym]
+    elif not comma:
+        hi = lo
+    if not (bounds := _bounds(lo, hi)):
+        return None
+    lo_n, hi_n = bounds
+    once = lo_n <= (1, "1") and (hi_n is None or hi_n >= (1, "1"))
+    alts = [ch] if once else []
+    if lo_n[1] == "0":
+        base = ord(ch) & ~0x3FF
+        alts.append(f"(?=[{chr(base)}-{chr(base + 0x3FF)}])")
+    if not alts:
+        return "(?!)", q.end()
+    return (alts[0] if len(alts) == 1 else f"(?:{'|'.join(alts)})"), q.end()
+
+
 def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
     r"""The JS-only spellings a tenant is likely to author: `(?<name>` -> `(?P<name>`, `\k<name>` -> `(?P=name)`, `[^]` (any
     char) -> `[\s\S]`, `\cX` -> the control character, a `{` that is no JS quantifier (`{,3}`,
@@ -534,6 +560,9 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
             if nxt == "k" and named and not in_class and (m := _JS_BACKREF.match(pattern, i)):   # `\k<name>` -> `(?P=name)`
                 out.append(f"(?P={m[1]})")
                 i = m.end()
+                continue
+            if not in_class and ord(nxt) > 0xFFFF and _JS_QUANT.match(pattern, i + 2):   # `\😀?` reads as `😀?` (5lra)
+                i += 1
                 continue
             kept = (not (nxt.isascii() and nxt.isalpha()) or _JS_ESCAPE.match(pattern, i + 1) is not None
                     or (nxt == "B" and not in_class) or (nxt == "k" and named))
@@ -635,17 +664,10 @@ def _js_to_re(pattern: str, scan: _Scan | None = None) -> str:
             out.append("\\{")
             i += 1
             continue
-        if ord(ch) > 0xFFFF and (q := _JS_QUANT.match(pattern, i + 1)):   # V8: the char once or never (5lra)
-            sym, lo, comma, hi = q.groups()
-            if sym:
-                lo, hi = {"?": ("0", "1"), "*": ("0", None), "+": ("1", None)}[sym]
-            elif not comma:
-                hi = lo
-            if bounds := _bounds(lo, hi):   # m > n is a SyntaxError: leave it as written
-                lo_n, hi_n = bounds
-                out.append(ch if lo_n <= (1, "1") and (hi_n is None or hi_n >= (1, "1")) else "(?!)")
-                i = q.end()
-                continue
+        if ord(ch) > 0xFFFF and (astral := _astral_quantified(ch, pattern, i + 1)):
+            rewrite, i = astral
+            out.append(rewrite)
+            continue
         out.append(ch)
         i += 1
     return "".join(out)
