@@ -9,6 +9,23 @@ description = "camada SDK for Python: inline enforcement of your snapshot (order
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
+keywords = [
+  "camada",
+  "bot-detection",
+  "bot-protection",
+  "credential-stuffing",
+  "account-takeover",
+  "rate-limiting",
+  "proof-of-work",
+  "ai-scraper",
+  "security",
+  "middleware",
+  "asgi",
+  "wsgi",
+  "fastapi",
+  "django",
+  "flask",
+]
 dependencies = [
     "regex>=2024.11.6",
 ]
@@ -26,9 +43,13 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://camada.app"
+Homepage = "https://www.camada.app/docs/python"
+Documentation = "https://www.camada.app/docs"
+"Bot Detection" = "https://www.camada.app/bot-detection"
+"Bot Signal Test" = "https://www.camada.app/tools/bot-test"
 Repository = "https://github.com/camada-app/camada-python"
 Issues = "https://github.com/camada-app/camada-python/issues"
+Changelog = "https://github.com/camada-app/camada-python/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [

@@ -4,12 +4,20 @@ camada for Python: enforces the tenant snapshot inline (your ordered custom rule
 block, challenge), serves a first-party proof-of-work challenge page and beacon, records the
 outcomes your handlers know (`track()`), and ships wire events in batches off the request path.
 One package on PyPI with an ASGI middleware (the first-class tier: it keeps the wire's header
-order), a WSGI middleware, and integrations for FastAPI, Django and Flask — the `sentry-sdk`
-model. Fails open by design: a camada outage or bug never 5xxes your app.
+order), a WSGI middleware, and integrations for FastAPI, Django and Flask (the `sentry-sdk`
+model). Fails open by design: a camada outage or bug never 5xxes your app.
 
-Not yet on PyPI — install it from a sibling checkout: `pip install -e ../camada-python` (or a uv
-path dependency, as [`camada-python-example`](https://github.com/camada-app/camada-python-example) does); publishing is one
-decision with the npm packages (SDK-G01). Python 3.10 or newer, no runtime dependencies.
+Install from PyPI with `pip install camada`. Python 3.10 or newer (`regex` is the one runtime
+dependency). For local SDK work, install from a sibling checkout with
+`pip install -e ../camada-python`, as [`camada-python-example`](https://github.com/camada-app/camada-python-example) does.
+
+## Documentation
+
+- [Python SDK guide](https://www.camada.app/docs/python): options, ASGI and WSGI middleware, and trusted-proxy rules.
+- Quickstarts: [FastAPI](https://www.camada.app/docs/quickstart/fastapi), [Django](https://www.camada.app/docs/quickstart/django), and [Flask](https://www.camada.app/docs/quickstart/flask).
+- [In-app bot detection](https://www.camada.app/bot-detection): how camada stops credential stuffing, fake signups, and scrapers.
+- [Test your bot signals](https://www.camada.app/tools/bot-test): live browser, HTTP, and TLS signal inspector.
+- [Docs](https://www.camada.app/docs) and [Pricing](https://www.camada.app/pricing): full reference and plan limits.
 
 ## Quickstart
 
@@ -41,8 +49,8 @@ The integrations share one lazy engine built from the environment on the first r
 build starts the snapshot poll on a thread and never blocks, so the request that triggered it is
 answered cold: it passes (fail open), and so does anything else that arrives before that first
 poll lands (a few hundred milliseconds against a local analyst; snapshot-size and network bound).
-To enforce from request 1, warm the engine in a startup hook by waiting for the boot poll —
-`snap.refresh()` alone is not it, the boot poll already holds the single-in-flight lock:
+To enforce from request 1, warm the engine in a startup hook by waiting for the boot poll.
+`snap.refresh()` alone is not it, because the boot poll already holds the single-in-flight lock:
 
 ```python
 import time
@@ -75,7 +83,7 @@ app.add_middleware(CamadaMiddleware, engine=engine)      # init_app(app, engine=
    poll thread at the cadence your tenant config sets (`poll_seconds`), with ETag/304 and gzip on
    the wire. `CAMADA_SERVERLESS=1` switches to a per-request staleness check with no thread. Every
    poll and event batch carries `x-camada-sdk: @camada/python/<version>`, and polls ask for
-   snapshot v5 (`x-camada-snapshot: 5`) — the container that carries your ordered custom rules.
+   snapshot v5 (`x-camada-snapshot: 5`), the container that carries your ordered custom rules.
 2. Resolves the client from the socket peer (`REMOTE_ADDR` / `scope["client"]`), combined with
    `X-Forwarded-For` only under your tenant's trusted-proxy config (or `CAMADA_TRUSTED_PROXY`
    locally). A forwarded header on its own is never the ip: any caller can set it. Entries may carry a
@@ -167,7 +175,7 @@ track(request, "login_failed", user=email)
 
 The identifier is HMAC-hashed in-process with your ingest token; the raw value never reaches the
 queue. `track()` never raises. Outside the middleware (a request it did not run for) the outcome
-still ships, with no `rid`/`sid`/`ip` to join on — and it builds the default engine from the
+still ships, with no `rid`/`sid`/`ip` to join on, and it builds the default engine from the
 environment if nothing has yet. The event name is free-form; the analyst's app-context rules read
 this vocabulary:
 
@@ -190,7 +198,7 @@ then `None`. A non-page (non-HTML) request also gets `None` and is signalled
 `sdk-python` is an in-app tap: status, latency, session, the beacon's browser signals and your
 outcomes. Under ASGI the event also carries the wire's header order (`hord`); WSGI's `environ`
 loses it, which is why ASGI is the first-class tier. camada resolves ASN and country itself. Enforcement at this position covers ip, path, user-agent and
-header conditions — ASN, country and TLS entries fail open in-app. `matches` patterns are JS
+header conditions: ASN, country and TLS entries fail open in-app. `matches` patterns are JS
 regexes read by Python's `re` (named groups, `[^]` and `\cX` are translated, `\d`/`\w`/`\b` stay
 ASCII); a spelling `re` still rejects never matches here, while it does at the edge. An astral
 character (an emoji, say) is one character here and two UTF-16 units at the edge, so a pattern
@@ -206,7 +214,7 @@ where JS `/i` does. This is an accepted gap (camada-all-6oof).
 - Threads do not survive a fork. Under gunicorn `--preload` or uWSGI the SDK notices the fork
   (`os.register_at_fork`) and restarts its poll and flush threads in each worker.
 - Pending events drain at interpreter exit within half a second. No signal handlers are
-  installed — an app owns its own shutdown — so a worker killed by SIGTERM without one may drop
+  installed (an app owns its own shutdown), so a worker killed by SIGTERM without one may drop
   its last batch.
 - Serverless: `CAMADA_SERVERLESS=1`. A cold invocation fails open and catches up on the next one.
 
