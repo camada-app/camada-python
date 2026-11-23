@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- feat: add opt-in credential hashing (`tk`) on request rows, including blocked requests. The beacon relay strips visitor-supplied `tk`, `bf`, and `upf`. (camada-all-29aa)
+
 ## 0.3.0 - 2026-10-26
 
 - fix (security): snapshot meta `pathsRegex` entries are now tested like a path `matches` rule condition, and inside the request's regex budget shared with the rule walk. They are case-insensitive, a pattern this SDK refuses never matches, and a path over 2048 chars, an engine failure or a spent budget answers block. Previously they ran outside the budget, and a failure was a miss. `Snapshot.paths_regex` is now a list of predicates. (camada-all-rvuh)

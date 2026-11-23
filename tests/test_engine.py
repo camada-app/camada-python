@@ -15,6 +15,7 @@ import pytest
 
 from camada.challenge.page import challenge_page_csp
 from camada.engine import NO_STORE_HEADERS, Camada, is_challenge_page
+from camada.redact import TokenHash
 from camada.version import SDK_ID
 
 from .fake_analyst import (
@@ -35,6 +36,9 @@ from .test_challenge import solve
 
 Driver = type[WsgiDriver] | type[AsgiDriver]
 HTML = [("accept", "text/html,*/*"), ("sec-fetch-dest", "document")]
+FAKE_TOKEN = "fake-token-0001-not-a-real-credential"
+AUTH = [("authorization", f"Bearer {FAKE_TOKEN}")]
+EXPECTED_TK = hmac.new(b"tok-test", f"tok:{FAKE_TOKEN}".encode(), hashlib.sha256).hexdigest()[:32]
 
 
 @pytest.fixture(params=DRIVERS, ids=lambda d: d.name)
@@ -219,20 +223,68 @@ class TestCapture:
         assert ev["p"] == "/crash" and ev["st"] == 500
 
 
+class TestTokenHash:
+    @pytest.mark.parametrize("mode", ["off", "on", "throwing"])
+    def test_finished_and_blocked_requests(
+        self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada], mode: str, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        env = {"CAMADA_TOKEN_HASH": "1"} if mode != "off" else None
+        h = Host(driver, analyst, engines, env)
+        attempted: list[str] = []
+
+        def fail(_: TokenHash, value: str) -> str:
+            attempted.append(value)
+            raise RuntimeError(value)
+
+        if mode == "throwing":
+            monkeypatch.setattr(TokenHash, "hash", fail)
+
+        served = h("GET", "/served", headers=AUTH)
+        assert served.status == 200 and served.body == b"hello"
+        assert h("GET", "/blocked", headers=AUTH, peer=BLOCKED_IP).status == 403
+        finish, blocked = h.events()
+        assert finish["st"] == 200 and finish["rid"] == served.header("x-rid")
+        assert blocked["st"] == 403 and blocked["blk"] == "ip4"
+        for row in (finish, blocked):
+            if mode == "on":
+                assert row["tk"] == EXPECTED_TK
+            else:
+                assert "tk" not in row
+            assert FAKE_TOKEN not in json.dumps(row)
+        if mode == "throwing":
+            assert attempted == [FAKE_TOKEN, FAKE_TOKEN]
+
+    @pytest.mark.parametrize("option", ["X_Invalid_Extra", "Set-Cookie"])
+    def test_rejected_header_warns_once_without_echoing_its_name(
+        self, analyst: FakeAnalyst, engines: list[Camada], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, option: str,
+    ) -> None:
+        monkeypatch.setattr("camada.guarded._last_log", float("-inf"))
+        env = {"CAMADA_SERVERLESS": "1", "CAMADA_TOKEN_HASH": "1", "CAMADA_TOKEN_HEADER": "x-env-key"}
+        for _ in range(2):
+            engine = engine_with(analyst, env, token_header=option)
+            engines.append(engine)
+            assert engine._token is not None and engine._token.header is None
+        (record,) = caplog.records
+        assert record.levelname == "WARNING" and "CAMADA_TOKEN_HEADER" in record.getMessage()
+        assert option.lower() not in record.getMessage().lower()
+
+
 class TestTrack:
     def test_track_ships_an_app_context_event_with_a_hashed_uid(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
         def login(req: dict[str, Any]) -> tuple[int, list[tuple[str, str]], bytes]:
             h.engine.track(req["camada"], "login_failed", user="alice@example.com")
             return 401, [], b""
 
-        h = Host(driver, analyst, engines, handler=login)
-        r = h("POST", "/login", body=b"x=1")
+        h = Host(driver, analyst, engines, handler=login, token_hash=True)
+        r = h("POST", "/login", headers=AUTH, body=b"x=1")
         evs = h.events()
         tracked = next(e for e in evs if e.get("et"))
         assert tracked["et"] == "login_failed" and tracked["tap"] == "sdk-python" and tracked["rid"] == r.header("x-rid")
         assert tracked["uid"] == hmac.new(b"tok-test", b"uid:alice@example.com", hashlib.sha256).hexdigest()[:32]
         assert "alice" not in json.dumps(evs)
         assert tracked["ip"] == "172.16.0.9" and "p" not in tracked
+        assert "tk" not in tracked
+        assert next(e for e in evs if e.get("p") == "/login")["tk"] == EXPECTED_TK
 
     def test_track_without_a_user_and_without_context(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
         h = Host(driver, analyst, engines)
@@ -256,10 +308,12 @@ class TestBeacon:
         assert row["sig"] == 1 and row["ip"] == "198.18.0.5" and row["tap"] == "sdk-python" and row["scr"] == "1x1" and row["rid"] == "r-1"
 
     def test_strips_sdk_attested_keys_a_visitor_puts_in_the_beacon_body(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
-        h = Host(driver, analyst, engines)
-        forged = dict.fromkeys(["tlsx", "ja4", "asn", "cc", "sid", "ns", "st", "dur", "rt", "blk", "rl", "wrn", "chs", "ch", "et", "uid"], "forged")
+        h = Host(driver, analyst, engines, token_hash=True)
+        forged = dict.fromkeys(
+            ["tlsx", "ja4", "asn", "cc", "sid", "ns", "st", "dur", "rt", "blk", "rl", "wrn", "chs", "ch", "et", "uid", "tk", "bf", "upf"], "forged",
+        )
         body = json.dumps({"rid": "r-1", "tz": "UTC", **forged}).encode()
-        assert h("POST", "/_cam/fp", headers=[("content-type", "application/json")], body=body).status == 204
+        assert h("POST", "/_cam/fp", headers=[*AUTH, ("content-type", "application/json")], body=body).status == 204
         (row,) = h.events()
         assert row["sig"] == 1 and row["rid"] == "r-1" and row["tz"] == "UTC" and row["tap"] == "sdk-python"
         assert not forged.keys() & row.keys()
@@ -398,16 +452,20 @@ class TestChallenge:
         assert r.status == 403 and r.header("x-camada-challenge") is None
 
     def test_verify_sets_cch_redirects_back_and_ships_ch_1(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada]) -> None:
-        h = Host(driver, analyst, engines)
-        page = h("GET", "/back?x=1", headers=HTML, peer=CHALLENGED_IP).text
+        h = Host(driver, analyst, engines, token_hash=True)
+        page = h("GET", "/back?x=1", headers=[*AUTH, *HTML], peer=CHALLENGED_IP).text
         nonce = page.split('name="nonce" value="')[1].split('"')[0]
         form = f"nonce={nonce}&solution={solve(nonce)}&to=%2Fback%3Fx%3D1"
-        r = h("POST", "/__camada/challenge", headers=[("content-type", "application/x-www-form-urlencoded")], body=form.encode(), peer=CHALLENGED_IP)
+        r = h(
+            "POST", "/__camada/challenge", headers=[*AUTH, ("content-type", "application/x-www-form-urlencoded")],
+            body=form.encode(), peer=CHALLENGED_IP,
+        )
         assert r.status == 302 and r.header("location") == "/back?x=1" and r.header("cache-control") == "no-store"
         cookie = r.header("set-cookie") or ""
         assert cookie.startswith("_cch=") and "HttpOnly" in cookie
-        evs = h.events()
-        assert evs[-1]["st"] == 200 and evs[-1]["ch"] == 1 and evs[-1]["p"] == "/__camada/challenge"
+        challenge, verify = h.events()
+        assert challenge["st"] == 403 and challenge["blk"] == "challenge" and challenge["tk"] == EXPECTED_TK
+        assert verify["st"] == 200 and verify["ch"] == 1 and verify["p"] == "/__camada/challenge" and verify["tk"] == EXPECTED_TK
         # the holder of a valid _cch passes; a cookie minted for another ip does not
         assert h("GET", "/back", headers=[*HTML, ("cookie", cookie.split(";")[0])], peer=CHALLENGED_IP).status == 200
         assert h("GET", "/back", headers=[*HTML, ("cookie", cookie.split(";")[0])], peer="192.0.2.21").status == 200   # not challenged at all

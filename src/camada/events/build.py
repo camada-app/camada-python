@@ -3,12 +3,12 @@
 # across taps. HDRS bit order is pinned by the shared fixture (hdrs.json) — never reorder.
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass
 from typing import Any
 
-from ..redact import scrub_query, scrub_url
+from ..redact import TokenHash, scrub_query, scrub_url, select_credential
+from ..redact import auth_scheme as auth_scheme
 
 HDRS: tuple[str, ...] = (
     "accept", "accept-language", "accept-encoding", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest",
@@ -17,10 +17,6 @@ HDRS: tuple[str, ...] = (
     "via", "x-forwarded-for", "priority", "sec-purpose", "save-data", "te", "if-modified-since", "if-none-match",
 )
 _HDR_BIT = {name: 1 << i for i, name in enumerate(HDRS)}
-
-# A schemeless header (`Authorization: <raw token>`) has no safe prefix: the first "word" IS
-# the credential. Only a real auth-scheme token followed by a space ever ships.
-_SCHEME_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,16}$")
 
 
 @dataclass(slots=True)
@@ -34,24 +30,15 @@ class RequestInfo:
     http_version: str | None = None                # e.g. '1.1'
 
 
-def auth_scheme(value: str | None) -> str | None:
-    if not value:
-        return None
-    sp = value.find(" ")
-    if sp <= 0:
-        return None
-    scheme = value[:sp]
-    return scheme if _SCHEME_RE.match(scheme) else None
-
-
 def now_ms() -> int:
     return int(time.time() * 1000)
 
 
 def build_wire_event(
-    r: RequestInfo, *, tap: str, rid: str, sid: str | None = None, new_session: bool = False, ja4: str | None = None
+    r: RequestInfo, *, tap: str, rid: str, sid: str | None = None, new_session: bool = False, ja4: str | None = None,
+    token: TokenHash | None = None,
 ) -> dict[str, Any]:
-    """The mutable wire event; the caller fills st/dur on response-finish before enqueueing."""
+    """The caller fills st/dur before enqueueing."""
     mask = hn = hb = 0
     cookie = ""
     names: list[str] = []
@@ -85,6 +72,13 @@ def build_wire_event(
     }
     if ja4:
         ev["ja4"] = ja4
+    if token is not None:
+        try:
+            candidate = select_credential(first, token.header)
+            if candidate is not None:
+                ev["tk"] = token.hash(candidate)
+        except Exception:
+            pass   # token telemetry must preserve the row and the verdict
     ev["st"] = None
     ev["dur"] = None   # 'dur': the collector wire already claims 'lat' for latitude
     return ev

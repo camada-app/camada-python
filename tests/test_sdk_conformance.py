@@ -8,14 +8,17 @@ from typing import Any
 
 import pytest
 
+from camada.config import resolve_token_header
 from camada.events.build import RequestInfo, build_wire_event
 from camada.ip import resolve_client_ip
+from camada.redact import TokenHash, select_credential
 
 from .conftest import read_json
 
 IP = read_json("ip/resolve.json")
 REFERER = read_json("redact/referer.json")
 QUERY = read_json("redact/query.json")
+TOKEN = read_json("redact/token.json")
 
 
 def test_fixtures_are_v3_and_not_empty() -> None:
@@ -49,3 +52,22 @@ def test_query_redaction(case: dict[str, Any]) -> None:
     wire = json.dumps(ev)
     for secret in case.get("absent", []):
         assert secret not in wire
+
+
+def test_token_fixture_is_v1_with_all_cases() -> None:
+    assert TOKEN["version"] == 1 and len(TOKEN["cases"]) == 22
+
+
+@pytest.mark.parametrize("case", TOKEN["cases"], ids=[c["id"] for c in TOKEN["cases"]])
+def test_token_redaction(case: dict[str, Any]) -> None:
+    headers = case["headers"]
+    token_header, invalid = resolve_token_header(case["tokenHeader"], None)
+    assert not invalid
+    assert select_credential(headers, token_header) == case["credential"]
+
+    info = RequestInfo(method="GET", host="x.test", path="/api/me", headers=list(headers.items()))
+    ev = build_wire_event(info, tap="sdk-python", rid="r", token=TokenHash(token_header, case["key"]))
+    if case["tk"] is None:
+        assert "tk" not in ev
+    else:
+        assert ev["tk"] == case["tk"]

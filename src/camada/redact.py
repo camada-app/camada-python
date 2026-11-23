@@ -8,6 +8,8 @@ import hashlib
 import hmac
 import json
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 # Exact patterns of C6 v3. Matching is ASCII-only (re.ASCII: no Unicode case folding, so U+017F never matches `s` and
@@ -18,6 +20,8 @@ _HEX_RE = re.compile(r"[a-fA-F0-9]{32,}", re.A)
 _B64_RE = re.compile(r"[A-Za-z0-9+/_-]{40,}={0,2}", re.A)
 _ESC_RE = re.compile(r"%([0-9a-fA-F]{2})", re.A)
 _NESTED_SPLIT_RE = re.compile(r"[?&]")
+SCHEME_RE = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]{1,16}")
+_CREDENTIAL_RE = re.compile(r"[\x20-\x7e]{8,}")
 
 REDACT_ALLOWLIST = ("plan", "role", "locale", "ab_variant")   # additions only, never narrowing
 
@@ -103,7 +107,49 @@ def body_shape(obj: Any) -> dict[str, int] | None:
     return out
 
 
+def _labelled_hmac(label: bytes, value: str, ingest_token: str) -> str:
+    return hmac.new(ingest_token.encode(), label + value.encode(), hashlib.sha256).hexdigest()[:32]
+
+
 def hash_user_id(user_id: str, ingest_token: str) -> str:
     """Stable per-tenant pseudonym: HMAC-SHA256 keyed by the ingest token, labelled so the hash
     can never double as anything else, truncated to 32 hex chars. The raw identifier never leaves."""
-    return hmac.new(ingest_token.encode(), b"uid:" + user_id.encode(), hashlib.sha256).hexdigest()[:32]
+    return _labelled_hmac(b"uid:", user_id, ingest_token)
+
+
+def auth_scheme(value: str | None) -> str | None:
+    """Only a valid auth-scheme token followed by a space is safe to report."""
+    if not value:
+        return None
+    sp = value.find(" ")
+    if sp <= 0:
+        return None
+    scheme = value[:sp]
+    return scheme if SCHEME_RE.fullmatch(scheme) else None
+
+
+def credential(value: str | None, scheme_split: bool) -> str | None:
+    if value is None:
+        return None
+    value = value.strip(" \t")
+    if scheme_split and (scheme := auth_scheme(value)) is not None:
+        value = value[len(scheme) + 1 :].lstrip(" \t")
+    return value if _CREDENTIAL_RE.fullmatch(value) else None
+
+
+def select_credential(first: Mapping[str, str], token_header: str | None) -> str | None:
+    extra = credential(first.get(token_header), False) if token_header else None
+    return extra or credential(first.get("authorization"), True)
+
+
+def hash_token(credential: str, ingest_token: str) -> str:
+    return _labelled_hmac(b"tok:", credential, ingest_token)
+
+
+@dataclass(slots=True)
+class TokenHash:
+    header: str | None  # normalized extra header name
+    _ingest_token: str = field(repr=False)
+
+    def hash(self, credential: str) -> str:
+        return hash_token(credential, self._ingest_token)
