@@ -15,6 +15,7 @@ import pytest
 
 from camada.challenge.page import challenge_page_csp
 from camada.engine import NO_STORE_HEADERS, Camada, is_challenge_page
+from camada.redact import TokenHash
 from camada.version import SDK_ID
 
 from .fake_analyst import (
@@ -224,17 +225,19 @@ class TestCapture:
 
 class TestTokenHash:
     @pytest.mark.parametrize("mode", ["off", "on", "throwing"])
-    def test_finished_and_blocked_requests(self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada], mode: str) -> None:
+    def test_finished_and_blocked_requests(
+        self, driver: Driver, analyst: FakeAnalyst, engines: list[Camada], mode: str, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         env = {"CAMADA_TOKEN_HASH": "1"} if mode != "off" else None
         h = Host(driver, analyst, engines, env)
         attempted: list[str] = []
 
-        def fail(value: str) -> str:
+        def fail(_: TokenHash, value: str) -> str:
             attempted.append(value)
             raise RuntimeError(value)
 
         if mode == "throwing":
-            h.engine._token_hasher = fail
+            monkeypatch.setattr(TokenHash, "hash", fail)
 
         served = h("GET", "/served", headers=AUTH)
         assert served.status == 200 and served.body == b"hello"
@@ -260,7 +263,7 @@ class TestTokenHash:
         for _ in range(2):
             engine = engine_with(analyst, env, token_header=option)
             engines.append(engine)
-            assert engine._token_header is None
+            assert engine._token is not None and engine._token.header is None
         (record,) = caplog.records
         assert record.levelname == "WARNING" and "CAMADA_TOKEN_HEADER" in record.getMessage()
         assert option.lower() not in record.getMessage().lower()

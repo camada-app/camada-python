@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from ..redact import SCHEME_RE, credential, scrub_query, scrub_url
+from ..redact import TokenHash, scrub_query, scrub_url, select_credential
+from ..redact import auth_scheme as auth_scheme
 
 HDRS: tuple[str, ...] = (
     "accept", "accept-language", "accept-encoding", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest",
@@ -30,26 +30,15 @@ class RequestInfo:
     http_version: str | None = None                # e.g. '1.1'
 
 
-def auth_scheme(value: str | None) -> str | None:
-    """Only a valid auth-scheme token followed by a space is safe to report."""
-    if not value:
-        return None
-    sp = value.find(" ")
-    if sp <= 0:
-        return None
-    scheme = value[:sp]
-    return scheme if SCHEME_RE.fullmatch(scheme) else None
-
-
 def now_ms() -> int:
     return int(time.time() * 1000)
 
 
 def build_wire_event(
     r: RequestInfo, *, tap: str, rid: str, sid: str | None = None, new_session: bool = False, ja4: str | None = None,
-    token_header: str | None = None, token_hasher: Callable[[str], str | None] | None = None,
+    token: TokenHash | None = None,
 ) -> dict[str, Any]:
-    """The caller fills st/dur before enqueueing. token_header is a normalized extra header name."""
+    """The caller fills st/dur before enqueueing."""
     mask = hn = hb = 0
     cookie = ""
     names: list[str] = []
@@ -83,12 +72,11 @@ def build_wire_event(
     }
     if ja4:
         ev["ja4"] = ja4
-    if token_hasher is not None:
+    if token is not None:
         try:
-            extra = credential(h(token_header), False) if token_header else None
-            candidate = extra or credential(h("authorization"), True)
-            if candidate is not None and (digest := token_hasher(candidate)):
-                ev["tk"] = digest
+            candidate = select_credential(first, token.header)
+            if candidate is not None:
+                ev["tk"] = token.hash(candidate)
         except Exception:
             pass   # token telemetry must preserve the row and the verdict
     ev["st"] = None

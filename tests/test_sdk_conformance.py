@@ -11,7 +11,7 @@ import pytest
 from camada.config import resolve_token_header
 from camada.events.build import RequestInfo, build_wire_event
 from camada.ip import resolve_client_ip
-from camada.redact import credential, hash_token
+from camada.redact import TokenHash, select_credential
 
 from .conftest import read_json
 
@@ -63,13 +63,10 @@ def test_token_redaction(case: dict[str, Any]) -> None:
     headers = case["headers"]
     token_header, invalid = resolve_token_header(case["tokenHeader"], None)
     assert not invalid
-    extra = credential(headers.get(token_header), False) if token_header else None
-    assert (extra or credential(headers.get("authorization"), True)) == case["credential"]
+    assert select_credential(headers, token_header) == case["credential"]
 
     info = RequestInfo(method="GET", host="x.test", path="/api/me", headers=list(headers.items()))
-    ev = build_wire_event(
-        info, tap="sdk-python", rid="r", token_header=token_header, token_hasher=lambda value: hash_token(value, case["key"]),
-    )
+    ev = build_wire_event(info, tap="sdk-python", rid="r", token=TokenHash(token_header, case["key"]))
     if case["tk"] is None:
         assert "tk" not in ev
     else:
