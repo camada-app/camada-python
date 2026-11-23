@@ -166,6 +166,13 @@ The tag is `<script src="/_cam/b.js?r=<rid>" async>`, so the beacon joins the pa
 served it. Move both paths with `script_path` / `fp_path` when `/_cam/` is not yours; the script
 derives the post path from its own URL, so the two must share a directory.
 
+The beacon is a vendored copy of a tagged `@camada/browser` release. CI reads `BEACON_VERSION`
+in `src/camada/beacon_js.py`, checks out `camada-browser` at `v<version>`, builds it, and
+compares the bytes. Changes on `camada-browser` main do not affect this check. To update the
+beacon, check out the new release tag in the sibling checkout, run `npm run build` there, then
+run `python scripts/sync_beacon.py` and commit the result. The version bump moves CI to the new tag.
+CI deliberately rejects builds from untagged main that differ from the tagged release.
+
 ## App-context events
 
 ```python
@@ -273,8 +280,8 @@ uv sync && uv run ruff check && uv run mypy && uv run pytest
 ```
 
 The suite reads the golden snapshot fixtures from the `camada-core` sibling checkout and pins the
-vendored beacon to `camada-browser/dist/auto.global.js` (`npm run build` there first, then
-`python scripts/sync_beacon.py` after a beacon release). Both fail by name when the checkout is
+vendored beacon to `camada-browser/dist/auto.global.js` (check out the release tag, run
+`npm run build` there, then `python scripts/sync_beacon.py`). Both fail by name when the checkout is
 missing rather than skipping.
 
 [`camada-python-example`](https://github.com/camada-app/camada-python-example) is the hand-test bench (FastAPI under uvicorn on
