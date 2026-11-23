@@ -149,11 +149,30 @@ app.add_middleware(CamadaMiddleware, engine=engine)      # init_app(app, engine=
 | `challenge_path` | `/__camada/challenge` | where the page posts its solution |
 | `snapshot_version` | `5` | 4 drops your custom rules; 3 the allow/challenge sides too |
 | `script_path` / `fp_path` | `/_cam/b.js` / `/_cam/fp` | the beacon endpoints; keep them in one directory |
+| `token_hash` | `None` | enable credential hashing with `True`, override the environment with `False` |
+| `token_header` | `None` | optional header to try before `Authorization` |
 
 Env: `CAMADA_KEY` (or `CAMADA_TOKEN` + `CAMADA_SNAPSHOT_TOKEN`), `CAMADA_INGEST_URL`,
 `CAMADA_SNAPSHOT_URL`, `CAMADA_TRUSTED_PROXY` (`none | vercel | hops:N | cidrs:a,b`),
 `CAMADA_SERVERLESS=1`, `CAMADA_CHALLENGE=0`, and the kill switch `CAMADA_DISABLED=1` (checked per
 request; set at boot, no threads start at all).
+
+### Credential hashing
+
+Set `token_hash=True` or leave it unset and set `CAMADA_TOKEN_HASH=1` to enable
+credential hashing. Set `token_header` to a dedicated API-key header name, or
+use `CAMADA_TOKEN_HEADER` when the option is unset or empty. The SDK tries
+that header first and falls back to `Authorization` when it finds no usable
+credential there.
+
+The SDK ships `tk` on request rows as a 32-character lowercase hex
+HMAC-SHA256 digest of the credential, keyed by the ingest token. The
+credential value stays in your app. When hashing is off or no hash can be
+computed, the row omits `tk`. Enable it only for random tokens or API keys.
+Keep it off for human passwords sent over Basic authentication.
+
+With Apache mod_wsgi, set `WSGIPassAuthorization On` to expose
+`Authorization` to the SDK.
 
 ## The first-party beacon
 

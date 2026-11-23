@@ -2,7 +2,12 @@
 # `RemoteConfig` is what GET /snapshot hands back in x-camada-config (whitelisted server-side).
 from __future__ import annotations
 
+import re
 from typing import Any, TypedDict, cast
+
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+_TOKEN_HEADER_RE = re.compile(r"[a-z0-9-]{1,64}")
+_FORBIDDEN_TOKEN_HEADERS = frozenset({"authorization", "cookie", "set-cookie"})
 
 
 class TrustedProxy(TypedDict, total=False):
@@ -32,6 +37,21 @@ def parse_key(key: str | None) -> tuple[str, str] | None:
     if dot <= 0 or dot == len(key) - 1:
         return None
     return key[:dot], key[dot + 1 :]
+
+
+def resolve_token_hash(option: bool | None, env: str | None) -> bool:
+    return option if option is not None else env == "1"
+
+
+def resolve_token_header(option: str | None, env: str | None) -> tuple[str | None, bool]:
+    """Return the normalized extra header and whether the selected name was rejected."""
+    selected = option or env
+    if not selected:
+        return None, False
+    name = selected.translate(_ASCII_LOWER)
+    if not _TOKEN_HEADER_RE.fullmatch(name) or name in _FORBIDDEN_TOKEN_HEADERS:
+        return None, True
+    return name, False
 
 
 def parse_trusted_proxy_env(v: str | None) -> TrustedProxy | None:

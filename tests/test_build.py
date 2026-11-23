@@ -1,6 +1,7 @@
 # The wire event reproduces the collector's record(); HDRS bit order is pinned by the shared
 # fixture (test_conformance) — here the derived counters and the credential rules.
 from camada.events.build import HDRS, RequestInfo, auth_scheme, build_wire_event
+from camada.redact import hash_token
 
 
 def req(headers: list[tuple[str, str]], query: str = "", ip: str | None = "1.2.3.4") -> RequestInfo:
@@ -12,6 +13,7 @@ def test_auth_scheme_only_ever_ships_a_scheme() -> None:
     assert auth_scheme("Basic dXNlcjpwYXNz") == "Basic"
     assert auth_scheme("rawtoken") is None
     assert auth_scheme(" Bearer x") is None
+    assert auth_scheme("Bearer\n x") is None
     assert auth_scheme("a" * 17 + " x") is None
     assert auth_scheme(None) is None
 
@@ -53,3 +55,23 @@ def test_referer_ships_with_its_query_scrubbed() -> None:
     assert ev["ref"] == "https://x.test/reset-password?token=~r&code=~r"
     assert jwt not in str(ev) and "4/0AbC" not in str(ev)
     assert build_wire_event(req([("Origin", "https://x.test")]), tap="sdk-python", rid="r")["ref"] is None
+
+
+def test_token_uses_only_the_first_value_for_each_header_name() -> None:
+    headers = [
+        ("X-Api-Key", "short"), ("x-api-key", "ignored-extra-token"),
+        ("Authorization", "Bearer first-auth-token"), ("authorization", "Bearer ignored-auth-token"),
+    ]
+    ev = build_wire_event(
+        req(headers), tap="sdk-python", rid="r", token_header="x-api-key", token_hasher=lambda value: hash_token(value, "test-key"),
+    )
+    assert ev["tk"] == hash_token("first-auth-token", "test-key")
+
+
+def test_throwing_token_hasher_leaves_the_request_row_intact() -> None:
+    def fail(value: str) -> str:
+        raise RuntimeError(value)
+
+    info = req([("Authorization", "Bearer fake-token-0001")])
+    ev = build_wire_event(info, tap="sdk-python", rid="r", token_hasher=fail)
+    assert ev["rid"] == "r" and "tk" not in ev

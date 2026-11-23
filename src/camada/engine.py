@@ -14,6 +14,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from http import HTTPStatus
 from typing import Any
 
@@ -22,13 +23,13 @@ from .beacon_js import BEACON_JS
 from .challenge.format import CHALLENGE_COOKIE, challenge_cookie, parse_form_body, safe_return_to, wants_html
 from .challenge.page import challenge_page, challenge_page_csp
 from .challenge.verify import ChallengeKit, create_challenge
-from .config import TrustedProxy
+from .config import TrustedProxy, resolve_token_hash, resolve_token_header
 from .env import Env, resolve_env
 from .events.build import RequestInfo, build_wire_event, now_ms
 from .events.queue import EventQueue
 from .guarded import log_rate_limited
 from .ip import resolve_client_ip
-from .redact import hash_user_id
+from .redact import hash_token, hash_user_id
 from .snapshot.client import SnapshotClient
 from .snapshot.match import MatchInput
 from .transport import Transport
@@ -144,6 +145,8 @@ class Camada:
         challenge: bool = True,                 # enforce `challenge` verdicts with the first-party page (CAMADA_CHALLENGE=0 also off)
         challenge_path: str = C.CHALLENGE_PATH,
         snapshot_version: int = C.DEFAULT_SNAPSHOT_VERSION,
+        token_hash: bool | None = None,
+        token_header: str | None = None,
     ) -> None:
         source: Mapping[str, str] = env if env is not None else os.environ
         self._env_source = source
@@ -153,8 +156,15 @@ class Camada:
         self.snap: SnapshotClient | None = None
         self.queue: EventQueue | None = None
         self.kit: ChallengeKit | None = None
+        self._token_header: str | None = None
+        self._token_hasher: Callable[[str], str | None] | None = None
         if self.env is None or source.get(C.KILL_SWITCH_ENV) == "1":
             return   # unconfigured or killed at boot: no threads, no exit hooks, truly silent
+        self._token_header, rejected = resolve_token_header(token_header, source.get("CAMADA_TOKEN_HEADER"))
+        if rejected:
+            log_rate_limited("ignoring invalid or forbidden token_header / CAMADA_TOKEN_HEADER setting", warning=True)
+        if resolve_token_hash(token_hash, source.get("CAMADA_TOKEN_HASH")):
+            self._token_hasher = partial(hash_token, ingest_token=self.env.ingest_token)
         self.snap = SnapshotClient(
             self.env.snapshot_url, self.env.snap_token, refresh_s=refresh_s, mode="lazy" if self.env.serverless else "timer",
             transport=transport, sdk=SDK_ID, snapshot_version=snapshot_version,
@@ -300,7 +310,10 @@ class Camada:
         info = RequestInfo(
             method=req.method, host=req.host, path=req.path, query=req.query, headers=req.headers, ip=ip, http_version=req.http_version
         )
-        return build_wire_event(info, tap=C.TAP, rid=rid, sid=sid, new_session=new_session)
+        return build_wire_event(
+            info, tap=C.TAP, rid=rid, sid=sid, new_session=new_session,
+            token_header=self._token_header, token_hasher=self._token_hasher,
+        )
 
     # ---- beacon ----
 

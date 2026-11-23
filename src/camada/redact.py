@@ -18,6 +18,8 @@ _HEX_RE = re.compile(r"[a-fA-F0-9]{32,}", re.A)
 _B64_RE = re.compile(r"[A-Za-z0-9+/_-]{40,}={0,2}", re.A)
 _ESC_RE = re.compile(r"%([0-9a-fA-F]{2})", re.A)
 _NESTED_SPLIT_RE = re.compile(r"[?&]")
+SCHEME_RE = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]{1,16}")
+_CREDENTIAL_RE = re.compile(r"[\x20-\x7e]{8,}")
 
 REDACT_ALLOWLIST = ("plan", "role", "locale", "ab_variant")   # additions only, never narrowing
 
@@ -107,3 +109,18 @@ def hash_user_id(user_id: str, ingest_token: str) -> str:
     """Stable per-tenant pseudonym: HMAC-SHA256 keyed by the ingest token, labelled so the hash
     can never double as anything else, truncated to 32 hex chars. The raw identifier never leaves."""
     return hmac.new(ingest_token.encode(), b"uid:" + user_id.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def credential(value: str | None, scheme_split: bool) -> str | None:
+    if value is None:
+        return None
+    value = value.strip(" \t")
+    if scheme_split:
+        prefix, sep, rest = value.partition(" ")
+        if sep and SCHEME_RE.fullmatch(prefix):
+            value = rest.lstrip(" \t")
+    return value if _CREDENTIAL_RE.fullmatch(value) else None
+
+
+def hash_token(credential: str, ingest_token: str) -> str:
+    return hmac.new(ingest_token.encode(), b"tok:" + credential.encode(), hashlib.sha256).hexdigest()[:32]
