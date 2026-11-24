@@ -26,7 +26,7 @@ from .config import TrustedProxy, resolve_token_hash, resolve_token_header
 from .env import Env, resolve_env
 from .events.build import RequestInfo, build_wire_event, now_ms
 from .events.queue import EventQueue
-from .guarded import log_rate_limited
+from .guarded import log_rate_limited, warn_rate_limited
 from .ip import resolve_client_ip
 from .redact import TokenHash, hash_user_id
 from .snapshot.client import SnapshotClient
@@ -160,7 +160,7 @@ class Camada:
             return   # unconfigured or killed at boot: no threads, no exit hooks, truly silent
         header, rejected = resolve_token_header(token_header, source.get("CAMADA_TOKEN_HEADER"))
         if rejected:
-            log_rate_limited("ignoring invalid or forbidden token_header / CAMADA_TOKEN_HEADER setting", warning=True)
+            warn_rate_limited("ignoring invalid or forbidden token_header / CAMADA_TOKEN_HEADER setting")
         if resolve_token_hash(token_hash, source.get("CAMADA_TOKEN_HASH")):
             self._token = TokenHash(header, self.env.ingest_token)
         self.snap = SnapshotClient(

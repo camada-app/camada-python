@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from ..config import _ASCII_LOWER
 from ..redact import TokenHash, scrub_query, scrub_url, select_credential
 from ..redact import auth_scheme as auth_scheme
 
@@ -44,7 +45,7 @@ def build_wire_event(
     names: list[str] = []
     first: dict[str, str] = {}
     for name, value in r.headers or ():
-        k = name.lower()
+        k = name.lower() if name.isascii() else name.translate(_ASCII_LOWER)
         hn += 1
         hb += len(name) + len(value)
         names.append(k)

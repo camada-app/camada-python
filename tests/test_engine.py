@@ -7,12 +7,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import time
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
+from camada import guarded
 from camada.challenge.page import challenge_page_csp
 from camada.engine import NO_STORE_HEADERS, Camada, is_challenge_page
 from camada.redact import TokenHash
@@ -258,15 +260,18 @@ class TestTokenHash:
     def test_rejected_header_warns_once_without_echoing_its_name(
         self, analyst: FakeAnalyst, engines: list[Camada], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, option: str,
     ) -> None:
-        monkeypatch.setattr("camada.guarded._last_log", float("-inf"))
+        monkeypatch.setattr(guarded, "_last_log", float("-inf"))
+        monkeypatch.setattr(guarded, "_last_warn", float("-inf"))
         env = {"CAMADA_SERVERLESS": "1", "CAMADA_TOKEN_HASH": "1", "CAMADA_TOKEN_HEADER": "x-env-key"}
         for _ in range(2):
             engine = engine_with(analyst, env, token_header=option)
             engines.append(engine)
             assert engine._token is not None and engine._token.header is None
-        (record,) = caplog.records
-        assert record.levelname == "WARNING" and "CAMADA_TOKEN_HEADER" in record.getMessage()
-        assert option.lower() not in record.getMessage().lower()
+        guarded.log_rate_limited(RuntimeError("sdk bug"))
+        assert caplog.record_tuples == [
+            ("camada", logging.WARNING, "[camada] config warning: ignoring invalid or forbidden token_header / CAMADA_TOKEN_HEADER setting"),
+            ("camada", logging.ERROR, "[camada] suppressed error (SDK fails open): sdk bug"),
+        ]
 
 
 class TestTrack:

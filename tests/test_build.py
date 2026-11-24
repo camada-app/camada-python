@@ -68,6 +68,18 @@ def test_token_uses_only_the_first_value_for_each_header_name() -> None:
     assert ev["tk"] == hash_token("first-auth-token", "test-key")
 
 
+def test_token_header_names_are_lowercased_ascii_only() -> None:
+    token = TokenHash("x-api-key", "test-key")
+    value = "fake-token-0001"
+    ev = build_wire_event(req([("X-Api-\u212aey", value)]), tap="sdk-python", rid="r", token=token)
+    assert "tk" not in ev
+    assert ev["hord"] == "x-api-\u212aey"
+
+    ev = build_wire_event(req([("X-Api-Key", value)]), tap="sdk-python", rid="r", token=token)
+    assert ev["tk"] == hash_token(value, "test-key")
+    assert ev["hord"] == "x-api-key"
+
+
 def test_throwing_token_hasher_leaves_the_request_row_intact(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(_: TokenHash, value: str) -> str:
         raise RuntimeError(value)
