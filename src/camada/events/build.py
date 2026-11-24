@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from string import ascii_lowercase, ascii_uppercase
 from typing import Any
 
 from ..redact import TokenHash, scrub_query, scrub_url, select_credential
@@ -17,6 +18,7 @@ HDRS: tuple[str, ...] = (
     "via", "x-forwarded-for", "priority", "sec-purpose", "save-data", "te", "if-modified-since", "if-none-match",
 )
 _HDR_BIT = {name: 1 << i for i, name in enumerate(HDRS)}
+_ASCII_LOWER = str.maketrans(ascii_uppercase, ascii_lowercase)
 
 
 @dataclass(slots=True)
@@ -44,7 +46,7 @@ def build_wire_event(
     names: list[str] = []
     first: dict[str, str] = {}
     for name, value in r.headers or ():
-        k = name.lower()
+        k = name.translate(_ASCII_LOWER)
         hn += 1
         hb += len(name) + len(value)
         names.append(k)
