@@ -437,5 +437,5 @@ def engine_of(ctx: Mapping[str, Any] | None) -> Camada | None:
 def create_camada(**opts: Any) -> Camada:
     c = Camada(**opts)
     if c.env is None:
-        log_rate_limited("CAMADA_KEY (or CAMADA_TOKEN + CAMADA_SNAPSHOT_TOKEN) not set — camada is inactive")
+        warn_rate_limited("CAMADA_KEY (or CAMADA_TOKEN + CAMADA_SNAPSHOT_TOKEN) not set — camada is inactive")
     return c

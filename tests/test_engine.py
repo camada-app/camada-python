@@ -16,7 +16,7 @@ import pytest
 
 from camada import guarded
 from camada.challenge.page import challenge_page_csp
-from camada.engine import NO_STORE_HEADERS, Camada, is_challenge_page
+from camada.engine import NO_STORE_HEADERS, Camada, create_camada, is_challenge_page
 from camada.redact import TokenHash
 from camada.version import SDK_ID
 
@@ -270,6 +270,18 @@ class TestTokenHash:
         guarded.log_rate_limited(RuntimeError("sdk bug"))
         assert caplog.record_tuples == [
             ("camada", logging.WARNING, "[camada] config warning: ignoring invalid or forbidden token_header / CAMADA_TOKEN_HEADER setting"),
+            ("camada", logging.ERROR, "[camada] suppressed error (SDK fails open): sdk bug"),
+        ]
+
+
+class TestUnconfiguredBoot:
+    def test_warns_as_config_and_leaves_the_error_budget(self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+        monkeypatch.setattr(guarded, "_last_log", float("-inf"))
+        monkeypatch.setattr(guarded, "_last_warn", float("-inf"))
+        create_camada(env={})
+        guarded.log_rate_limited(RuntimeError("sdk bug"))
+        assert caplog.record_tuples == [
+            ("camada", logging.WARNING, "[camada] config warning: CAMADA_KEY (or CAMADA_TOKEN + CAMADA_SNAPSHOT_TOKEN) not set — camada is inactive"),
             ("camada", logging.ERROR, "[camada] suppressed error (SDK fails open): sdk bug"),
         ]
 
