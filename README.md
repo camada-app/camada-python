@@ -298,9 +298,12 @@ uv sync && uv run ruff check && uv run mypy && uv run pytest
 ```
 
 The suite reads the golden snapshot fixtures from the `camada-core` sibling checkout and pins the
-vendored beacon to `camada-browser/dist/auto.global.js` (check out the release tag, run
-`npm run build` there, then `python scripts/sync_beacon.py`). Both fail by name when the checkout is
-missing rather than skipping.
+vendored beacon to `camada-browser/dist/auto.global.js` (check out the release tag, run `npm run
+build` there, then `python scripts/sync_beacon.py`). Both fail by name when the checkout is
+missing rather than skipping. CI checks out `camada-core` at the commit pinned by `ref:` in
+`.github/workflows/ci.yml`, so a fixture change on camada-core main cannot turn this CI red; local
+runs use the sibling checkout as it is. To take new fixtures, push them to camada-core main first,
+then set `ref:` to that commit's full SHA in the same commit as the SDK change.
 
 [`camada-python-example`](https://github.com/camada-app/camada-python-example) is the hand-test bench (FastAPI under uvicorn on
 :3002), and `node scripts/e2e-sdk-python.mjs` in `camada/edge-analyst` drives it against a seeded
